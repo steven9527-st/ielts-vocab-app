@@ -9,15 +9,23 @@ from flask import (Flask, jsonify, redirect, render_template, request,
                    send_file, session, url_for)
 
 from database import get_db, init_db
-from pdf_parser import parse_pdf
 from excel_parser import (apply_mapping, guess_columns, parse_table_raw)
+from paths import is_frozen, resource_dir, tmp_parse_dir
+from pdf_parser import parse_pdf
 
-app = Flask(__name__)
+# 打包环境下，Flask 需要明确指定 templates / static 资源路径（PyInstaller 解压目录）
+if is_frozen():
+    app = Flask(
+        __name__,
+        template_folder=os.path.join(resource_dir(), 'templates'),
+        static_folder=os.path.join(resource_dir(), 'static'),
+    )
+else:
+    app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
 # 服务器端临时存储目录（解析结果太大不能放 cookie）
-_TMP_DIR = os.path.join(os.path.dirname(__file__), '.tmp_parse')
-os.makedirs(_TMP_DIR, exist_ok=True)
+_TMP_DIR = tmp_parse_dir()
 
 
 def _save_parse_result(entries: list) -> str:
@@ -1189,6 +1197,48 @@ def import_data():
 # 启动
 # ─────────────────────────────────────────
 
+def _find_free_port(preferred: int = 5000, fallbacks: tuple = (5001, 5002, 5050, 5500, 8000, 8080)) -> int:
+    """优先用 preferred 端口；被占用则尝试 fallback 列表；都不通则交给系统选"""
+    import socket
+    candidates = (preferred,) + fallbacks
+    for port in candidates:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(('127.0.0.1', port))
+                return port
+            except OSError:
+                continue
+    # 兜底：让系统分配
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
+
+def _open_browser_when_ready(url: str, delay: float = 1.5):
+    """延迟开浏览器，给 Flask 启动留时间"""
+    import threading
+    import time
+    import webbrowser
+
+    def _open():
+        time.sleep(delay)
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    threading.Thread(target=_open, daemon=True).start()
+
+
 if __name__ == '__main__':
     init_db()
-    app.run(host='127.0.0.1', port=5000, debug=False)
+    # 打包环境：找可用端口 + 自动开浏览器
+    if is_frozen():
+        port = _find_free_port(5000)
+        url = f'http://127.0.0.1:{port}'
+        print(f'[IELTSVocab] Starting on {url}')
+        _open_browser_when_ready(url)
+        app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False)
+    else:
+        # 开发模式：固定 5000，不自动开浏览器（避免开发时打扰）
+        app.run(host='127.0.0.1', port=5000, debug=False)

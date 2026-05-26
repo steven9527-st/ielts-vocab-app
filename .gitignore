@@ -6,3 +6,14 @@ vocab.db-shm
 vocab.db-wal
 .tmp_parse/
 *.json.bak
+
+# macOS
+.DS_Store
+
+# PyInstaller 构建产物（每次本地构建生成，不入仓库）
+build/
+dist/
+*.spec.bak
+
+# 打包产物中间文件（保留 spec 和 build_assets/icon.icns 源文件，不保留 .iconset 临时目录）
+*.iconset/
