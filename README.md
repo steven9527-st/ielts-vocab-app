@@ -122,3 +122,9 @@ learn_session -- 学习会话（支持断点续传）
 - 本地数据文件 `vocab.db` 已加入 `.gitignore`，不会随代码提交
 - 启动脚本会自动创建 `venv` 虚拟环境并安装依赖，无需手动配置
 - Flask 仅监听 `127.0.0.1`，数据不出本机
+
+## 相关文档
+
+- [`BRANCHES.md`](BRANCHES.md) — 分支使用守则（main vs packaging）
+- [`PACKAGING.md`](PACKAGING.md) — 桌面 app 打包流程（需切到 `packaging` 分支查看）
+- [`openspec/`](openspec/) — 完整规格文档与设计决策归档
