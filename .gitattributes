@@ -1,0 +1,24 @@
+# .bat 必须 CRLF（Windows cmd 不能可靠处理 LF）
+*.bat text eol=crlf
+
+# .sh 必须 LF（macOS/Linux shell 必须）
+*.sh text eol=lf
+
+# Python 与配置文件统一 LF
+*.py text eol=lf
+*.spec text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+
+# 二进制文件
+*.png binary
+*.icns binary
+*.ico binary
+*.pdf binary
+*.dmg binary
+*.exe binary
