@@ -31,7 +31,7 @@
       <div class="wrong-list__title">错题详情</div>
       {% for item in wrong_items %}
       <div class="wrong-item">
-        <div class="wrong-item__english">{{ item.english }}</div>
+        <div class="wrong-item__english">{{ item.english | lower }}</div>
         <div class="wrong-item__user">✗ 你的选择：{{ item.user_answer or '（未作答）' }}</div>
         <div class="wrong-item__correct">✓ 正确答案：{{ item.correct_answer }}</div>
       </div>

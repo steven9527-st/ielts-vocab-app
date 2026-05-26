@@ -9,6 +9,7 @@
       <div class="page-subtitle">共 {{ words | length }} 个单词</div>
     </div>
     <div class="flex gap-3">
+      <button class="btn btn--danger" id="deleteListBtn">删除此词库</button>
       <a href="{{ url_for('import_page') }}" class="btn btn--ghost">导入新词库</a>
     </div>
   </div>
@@ -24,6 +25,7 @@
       <thead>
         <tr>
           <th>英文</th>
+          <th>音标 / 词性</th>
           <th>中文释义</th>
           <th>状态</th>
           <th style="width:120px;">操作</th>
@@ -34,9 +36,21 @@
         <tr data-id="{{ w.id }}" data-english="{{ w.english | lower }}" data-chinese="{{ w.chinese }}">
           <td>
             <span class="word-english text-mono" style="font-weight:500;">{{ w.english }}</span>
+            {% if w.phonetic or w.pos %}
+            <div class="word-meta">
+              {% if w.phonetic %}<span class="word-phonetic">{{ w.phonetic }}</span>{% endif %}
+              {% if w.pos %}<span class="word-pos-badge">{{ w.pos }}</span>{% endif %}
+            </div>
+            {% endif %}
           </td>
           <td>
-            <span class="word-chinese" style="font-size:14px;">{{ w.chinese }}</span>
+            <span class="word-chinese" style="font-size:14px;">
+              {% for line in (w.chinese or '').split(' | ') %}
+                {% if line.strip() %}
+                <div class="meaning-line">{{ line }}</div>
+                {% endif %}
+              {% endfor %}
+            </span>
           </td>
           <td>
             <button class="badge {% if w.status == 'mastered' %}badge--green{% else %}badge--blue{% endif %} status-btn"
@@ -69,6 +83,14 @@
     <div style="margin-bottom:16px;">
       <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">英文</label>
       <input type="text" id="editEnglish" class="input">
+    </div>
+    <div style="margin-bottom:12px;">
+      <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">音标</label>
+      <input type="text" id="editPhonetic" class="input" placeholder="如 [ə'bændən]">
+    </div>
+    <div style="margin-bottom:12px;">
+      <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">词性</label>
+      <input type="text" id="editPos" class="input" placeholder="如 v. / adj. / n.">
     </div>
     <div style="margin-bottom:24px;">
       <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">中文释义</label>
@@ -135,6 +157,8 @@ document.querySelectorAll('.edit-btn').forEach(btn => {
     const tr = btn.closest('tr');
     editingId = btn.dataset.id;
     document.getElementById('editEnglish').value = tr.querySelector('.word-english').textContent.trim();
+    document.getElementById('editPhonetic').value = tr.querySelector('.word-phonetic')?.textContent.trim() || '';
+    document.getElementById('editPos').value = tr.querySelector('.word-pos-badge')?.textContent.trim() || '';
     document.getElementById('editChinese').value = tr.querySelector('.word-chinese').textContent.trim();
     document.getElementById('editModal').style.display = 'flex';
   });
@@ -142,23 +166,45 @@ document.querySelectorAll('.edit-btn').forEach(btn => {
 document.getElementById('saveEditBtn').addEventListener('click', async () => {
   const english = document.getElementById('editEnglish').value.trim();
   const chinese = document.getElementById('editChinese').value.trim();
+  const phonetic = document.getElementById('editPhonetic').value.trim();
+  const pos = document.getElementById('editPos').value.trim();
   if (!english || !chinese) return;
   const resp = await fetch(`/api/word/${editingId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ english, chinese })
+    body: JSON.stringify({ english, chinese, phonetic, pos })
   });
   if ((await resp.json()).ok) {
     const tr = document.querySelector(`tr[data-id="${editingId}"]`);
     tr.querySelector('.word-english').textContent = english;
-    tr.querySelector('.word-chinese').textContent = chinese;
     tr.dataset.english = english.toLowerCase();
+    tr.querySelector('.word-chinese').textContent = chinese;
     tr.dataset.chinese = chinese;
+    // 更新音标/词性显示
+    let metaEl = tr.querySelector('.word-meta');
+    if (!metaEl) {
+      metaEl = document.createElement('div');
+      metaEl.className = 'word-meta';
+      tr.querySelector('td:first-child').appendChild(metaEl);
+    }
+    metaEl.innerHTML =
+      (phonetic ? `<span class="word-phonetic">${phonetic}</span>` : '') +
+      (pos ? `<span class="word-pos-badge">${pos}</span>` : '');
     closeModal();
   }
 });
 document.getElementById('editModal').addEventListener('click', (e) => {
   if (e.target === document.getElementById('editModal')) closeModal();
+});
+
+// 删除词库
+document.getElementById('deleteListBtn').addEventListener('click', async () => {
+  const listName = document.querySelector('.page-title').textContent;
+  if (!confirm(`确定要删除词库「${listName}」吗？\n\n所有单词和学习记录将被永久删除，此操作不可撤销！`)) return;
+  const resp = await fetch(`/api/list/{{ current_list.id }}`, { method: 'DELETE' });
+  if ((await resp.json()).ok) {
+    window.location.href = '/';
+  }
 });
 </script>
 {% endblock %}

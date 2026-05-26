@@ -14,9 +14,6 @@ from pdf_parser import parse_pdf
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# Jinja2 enumerate 过滤器
-app.jinja_env.globals['enumerate'] = enumerate
-
 # 服务器端临时存储目录（解析结果太大不能放 cookie）
 _TMP_DIR = os.path.join(os.path.dirname(__file__), '.tmp_parse')
 os.makedirs(_TMP_DIR, exist_ok=True)
@@ -47,6 +44,37 @@ def _delete_parse_result(token: str):
     if not token:
         return
     path = os.path.join(_TMP_DIR, f'{token}.json')
+    if os.path.exists(path):
+        os.unlink(path)
+
+
+# ── Quiz 数据服务端存储（避免 session cookie 超限） ───────────────
+
+def _save_quiz_data(data: dict) -> str:
+    """将测验数据保存到服务器临时文件，返回 token"""
+    token = str(uuid.uuid4())
+    path = os.path.join(_TMP_DIR, f'quiz_{token}.json')
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False)
+    return token
+
+
+def _load_quiz_data(token: str) -> dict:
+    """根据 token 读取测验数据"""
+    if not token:
+        return {}
+    path = os.path.join(_TMP_DIR, f'quiz_{token}.json')
+    if not os.path.exists(path):
+        return {}
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def _delete_quiz_data(token: str):
+    """清理 quiz 临时文件"""
+    if not token:
+        return
+    path = os.path.join(_TMP_DIR, f'quiz_{token}.json')
     if os.path.exists(path):
         os.unlink(path)
 
@@ -283,8 +311,10 @@ def import_confirm():
             continue
         try:
             db.execute(
-                'INSERT OR IGNORE INTO words (list_id, english, chinese) VALUES (?, ?, ?)',
-                (new_list_id, english, chinese)
+                'INSERT OR IGNORE INTO words (list_id, english, chinese, phonetic, pos) VALUES (?, ?, ?, ?, ?)',
+                (new_list_id, english, chinese,
+                 entry.get('phonetic', '').strip(),
+                 entry.get('pos', '').strip())
             )
             count += 1
         except Exception:
@@ -439,8 +469,14 @@ def learn_quiz():
         return redirect(url_for('index'))
 
     list_id = get_current_list_id()
+    if not list_id:
+        return redirect(url_for('index'))
     db = get_db()
     ls = db.execute('SELECT * FROM learn_session WHERE id=?', (sess_id,)).fetchone()
+
+    if not ls or ls['status'] != 'in_progress':
+        db.close()
+        return redirect(url_for('index'))
 
     # 检查词库是否够生成干扰项
     total_words = db.execute('SELECT COUNT(*) FROM words WHERE list_id=?', (list_id,)).fetchone()[0]
@@ -458,19 +494,24 @@ def learn_quiz():
         return render_template('quiz_error.html', message='词库单词数不足（至少需要 4 个词）')
 
     random.shuffle(questions)
-    session['quiz_questions'] = questions
+    # 存到服务端文件，避免 cookie 超限
+    token = _save_quiz_data({'questions': questions, 'word_ids': word_ids})
+    session['quiz_token'] = token
     session['quiz_index'] = 0
     session['quiz_answers'] = {}
     session['quiz_mode'] = 'learn'
-    session['quiz_word_ids'] = word_ids
 
     return redirect(url_for('quiz_question'))
 
 
 @app.route('/quiz/question')
 def quiz_question():
-    questions = session.get('quiz_questions', [])
+    quiz_data = _load_quiz_data(session.get('quiz_token', ''))
+    questions = quiz_data.get('questions', [])
     idx = session.get('quiz_index', 0)
+
+    if not questions:
+        return redirect(url_for('index'))
 
     if idx >= len(questions):
         return redirect(url_for('quiz_submit'))
@@ -486,10 +527,11 @@ def quiz_question():
 @app.route('/quiz/answer', methods=['POST'])
 def quiz_answer():
     idx = session.get('quiz_index', 0)
-    questions = session.get('quiz_questions', [])
+    quiz_data = _load_quiz_data(session.get('quiz_token', ''))
+    total = len(quiz_data.get('questions', []))
     selected = request.form.get('answer', '')
 
-    if idx < len(questions):
+    if idx < total:
         answers = session.get('quiz_answers', {})
         answers[str(idx)] = selected
         session['quiz_answers'] = answers
@@ -500,9 +542,14 @@ def quiz_answer():
 
 @app.route('/quiz/submit')
 def quiz_submit():
-    questions = session.get('quiz_questions', [])
+    quiz_data = _load_quiz_data(session.get('quiz_token', ''))
+    questions = quiz_data.get('questions', [])
+    word_ids = quiz_data.get('word_ids', [])
     answers = session.get('quiz_answers', {})
     mode = session.get('quiz_mode', 'learn')
+
+    if not questions:
+        return redirect(url_for('index'))
 
     correct_count = 0
     wrong_items = []
@@ -523,12 +570,14 @@ def quiz_submit():
     total = len(questions)
     accuracy = correct_count / total if total > 0 else 0
 
+    # 清理服务端临时文件
+    _delete_quiz_data(session.pop('quiz_token', None))
+
     if mode == 'learn':
         if accuracy == 1.0:
             # 通关处理
             list_id = get_current_list_id()
             sess_id = session.get('learn_session_id')
-            word_ids = session.get('quiz_word_ids', [])
             start_time = None
 
             db = get_db()
@@ -558,9 +607,7 @@ def quiz_submit():
 
             session.pop('learn_session_id', None)
             session.pop('learn_total', None)
-            session.pop('quiz_questions', None)
             session.pop('quiz_answers', None)
-            session.pop('quiz_word_ids', None)
 
             return render_template('quiz_result.html',
                                    mode='learn',
@@ -580,7 +627,6 @@ def quiz_submit():
 
     else:  # test mode
         list_id = get_current_list_id()
-        word_ids = session.get('quiz_word_ids', [])
         db = get_db()
         db.execute(
             'INSERT INTO study_log (list_id, date, mode, word_ids, accuracy) VALUES (?,?,?,?,?)',
@@ -592,9 +638,7 @@ def quiz_submit():
         score_label = '优秀 🎉' if accuracy >= 0.9 else ('良好 👍' if accuracy >= 0.7 else '加油 💪')
         test_count = session.get('test_count', total)
 
-        session.pop('quiz_questions', None)
         session.pop('quiz_answers', None)
-        session.pop('quiz_word_ids', None)
 
         return render_template('test_result.html',
                                correct=correct_count,
@@ -610,6 +654,8 @@ def quiz_retry():
     """错题重做：对错题重新生成题目"""
     wrong_items = request.get_json().get('wrong_items', [])
     list_id = get_current_list_id()
+    if not list_id:
+        return jsonify({'error': '无词库'}), 400
     word_ids = [w['word_id'] for w in wrong_items]
 
     questions = generate_quiz_questions(word_ids, list_id)
@@ -617,11 +663,12 @@ def quiz_retry():
         return jsonify({'error': '无法生成题目'}), 400
 
     random.shuffle(questions)
-    session['quiz_questions'] = questions
+    # 存到服务端文件
+    token = _save_quiz_data({'questions': questions, 'word_ids': word_ids})
+    session['quiz_token'] = token
     session['quiz_index'] = 0
     session['quiz_answers'] = {}
     session['quiz_mode'] = 'learn'
-    session['quiz_word_ids'] = word_ids
 
     return jsonify({'ok': True})
 
@@ -642,6 +689,8 @@ def test_setup():
 @app.route('/test/start', methods=['POST'])
 def test_start():
     list_id = get_current_list_id()
+    if not list_id:
+        return redirect(url_for('index'))
     m = request.form.get('m', 10, type=int)
 
     db = get_db()
@@ -664,11 +713,12 @@ def test_start():
         return render_template('quiz_error.html', message='词库单词数不足（至少需要 4 个词）')
 
     random.shuffle(questions)
-    session['quiz_questions'] = questions
+    # 存到服务端文件，避免 cookie 超限
+    token = _save_quiz_data({'questions': questions, 'word_ids': word_ids})
+    session['quiz_token'] = token
     session['quiz_index'] = 0
     session['quiz_answers'] = {}
     session['quiz_mode'] = 'test'
-    session['quiz_word_ids'] = word_ids
     session['test_count'] = m
 
     return redirect(url_for('quiz_question'))
@@ -705,6 +755,10 @@ def update_word(word_id):
         fields['english'] = data['english'].strip()
     if 'chinese' in data:
         fields['chinese'] = data['chinese'].strip()
+    if 'phonetic' in data:
+        fields['phonetic'] = data['phonetic'].strip()
+    if 'pos' in data:
+        fields['pos'] = data['pos'].strip()
     if 'status' in data and data['status'] in ('mastered', 'unmastered'):
         fields['status'] = data['status']
 
@@ -728,6 +782,25 @@ def delete_word(word_id):
     db.execute('DELETE FROM words WHERE id=?', (word_id,))
     db.commit()
     db.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/list/<int:list_id>', methods=['DELETE'])
+def delete_list(list_id):
+    """删除整个词库（外键 CASCADE 自动清理 words、learn_session）"""
+    db = get_db()
+    row = db.execute('SELECT id FROM word_lists WHERE id=?', (list_id,)).fetchone()
+    if not row:
+        db.close()
+        return jsonify({'error': '词库不存在'}), 404
+    db.execute('DELETE FROM word_lists WHERE id=?', (list_id,))
+    db.commit()
+    db.close()
+
+    # 若删除的是当前选中词库，清除 session
+    if session.get('list_id') == list_id:
+        session.pop('list_id', None)
+
     return jsonify({'ok': True})
 
 

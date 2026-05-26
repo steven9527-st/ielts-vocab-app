@@ -16,15 +16,15 @@
   </div>
 
   <!-- 题目 -->
-  <div class="quiz-english">{{ question.english }}</div>
+  <div class="quiz-english">{{ question.english | lower }}</div>
 
   <!-- 选项 -->
   <form method="post" action="{{ url_for('quiz_answer') }}" id="quizForm">
     <div class="quiz-options">
       {% set letters = ['A', 'B', 'C', 'D'] %}
-      {% for i, opt in question.options | enumerate %}
+      {% for opt in question.options %}
       <button type="submit" name="answer" value="{{ opt }}" class="quiz-option">
-        <span class="quiz-option__letter">{{ letters[i] }}</span>
+        <span class="quiz-option__letter">{{ letters[loop.index0] }}</span>
         <span>{{ opt }}</span>
       </button>
       {% endfor %}

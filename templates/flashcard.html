@@ -16,11 +16,20 @@
   <div class="flashcard" id="card" tabindex="0">
     <div class="flashcard__inner">
       <div class="flashcard__front">
-        <div class="flashcard__word">{{ word.english }}</div>
+        <div class="flashcard__word">{{ word.english | lower }}</div>
+        {% if word.phonetic %}
+        <div class="flashcard__phonetic flashcard__phonetic--front">{{ word.phonetic }}</div>
+        {% endif %}
         <div class="flashcard__hint">点击查看释义</div>
       </div>
       <div class="flashcard__back">
-        <div class="flashcard__meaning">{{ word.chinese }}</div>
+        <div class="flashcard__meaning">
+          {% for line in (word.chinese or '').split(' | ') %}
+            {% if line.strip() %}
+            <div class="meaning-line">{{ line }}</div>
+            {% endif %}
+          {% endfor %}
+        </div>
       </div>
     </div>
   </div>

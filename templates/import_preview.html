@@ -26,6 +26,8 @@
         <tr>
           <th style="width:50px;">#</th>
           <th>英文</th>
+          <th style="width:100px;">音标</th>
+          <th style="width:60px;">词性</th>
           <th>中文释义</th>
           <th style="width:80px;">状态</th>
           <th style="width:60px;"></th>
@@ -38,17 +40,45 @@
             data-duplicate="{{ 'true' if entry.duplicate else 'false' }}">
           <td class="text-mono text-sm text-muted">{{ loop.index }}</td>
           <td>
+            {% if entry.failed %}
+            <input type="text" class="input cell-english-edit" value="{{ entry.english }}"
+                   placeholder="请输入英文单词" style="width:100%; min-width:100px; font-size:13px;">
+            {% else %}
             <span class="cell-english" contenteditable="{{ 'false' if entry.duplicate else 'true' }}"
                   style="display:inline-block; min-width:80px; outline:none;">{{ entry.english }}</span>
+            {% endif %}
           </td>
           <td>
+            {% if entry.failed %}
+            <input type="text" class="input cell-phonetic-edit" value=""
+                   placeholder="-" style="width:100%; min-width:70px; font-size:13px;">
+            {% else %}
+            <span class="cell-phonetic" contenteditable="{{ 'false' if entry.duplicate else 'true' }}"
+                  style="display:inline-block; min-width:70px; outline:none; color:var(--clr-gray-500);">{{ entry.phonetic or '' }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if entry.failed %}
+            <input type="text" class="input cell-pos-edit" value="" placeholder="-"
+                   style="width:100%; min-width:40px; font-size:13px;">
+            {% else %}
+            <span class="cell-pos" contenteditable="{{ 'false' if entry.duplicate else 'true' }}"
+                  style="display:inline-block; min-width:30px; outline:none;">{{ entry.pos or '' }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if entry.failed %}
+            <input type="text" class="input cell-chinese-edit" value="{{ entry.chinese }}"
+                   placeholder="请输入中文释义" style="width:100%; min-width:150px; font-size:13px;">
+            {% if entry.raw is defined %}
+            <span class="text-sm text-muted" style="display:block; margin-top:4px; font-size:11px; word-break:break-all;">原文: {{ entry.raw }}</span>
+            {% endif %}
+            {% else %}
             <span class="cell-chinese" contenteditable="{{ 'false' if entry.duplicate else 'true' }}"
                   style="display:inline-block; min-width:120px; outline:none;">{{ entry.chinese }}</span>
+            {% endif %}
             {% if entry.failed %}
-              <span class="badge badge--pink" style="margin-left:8px;">解析失败</span>
-              {% if entry.raw is defined %}
-              <span class="text-sm text-muted" style="display:block; margin-top:4px; font-size:11px; word-break:break-all;">{{ entry.raw }}</span>
-              {% endif %}
+              <span class="badge badge--pink" style="margin-left:8px;">解析失败 · 可手动填写</span>
             {% endif %}
           </td>
           <td>
@@ -106,10 +136,17 @@ document.getElementById('confirmBtn').addEventListener('click', async () => {
   const entries = [];
   rows.forEach(r => {
     if (r.dataset.duplicate === 'true') return;
-    const english = r.querySelector('.cell-english').textContent.trim();
-    const chinese = r.querySelector('.cell-chinese').textContent.trim();
+    // 支持 input 框（failed 条目）和 contenteditable（正常条目）两种方式
+    const enInput = r.querySelector('.cell-english-edit');
+    const zhInput = r.querySelector('.cell-chinese-edit');
+    const phInput = r.querySelector('.cell-phonetic-edit');
+    const posInput = r.querySelector('.cell-pos-edit');
+    const english = enInput ? enInput.value.trim() : (r.querySelector('.cell-english')?.textContent.trim() || '');
+    const chinese = zhInput ? zhInput.value.trim() : (r.querySelector('.cell-chinese')?.textContent.trim() || '');
+    const phonetic = phInput ? phInput.value.trim() : (r.querySelector('.cell-phonetic')?.textContent.trim() || '');
+    const pos = posInput ? posInput.value.trim() : (r.querySelector('.cell-pos')?.textContent.trim() || '');
     if (english && chinese) {
-      entries.push({ english, chinese });
+      entries.push({ english, chinese, phonetic, pos });
     }
   });
 
