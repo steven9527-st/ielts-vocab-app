@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}导入词库{% endblock %}
+
+{% block content %}
+<div class="container" style="padding-top:60px; padding-bottom:60px;">
+  <div class="page-title">导入词库</div>
+  <div class="page-subtitle">支持「序号. 单词 英[音标] 词性+释义」格式的 PDF 词表</div>
+
+  <div class="card" style="max-width:480px;">
+    <form id="importForm">
+      <div style="margin-bottom: var(--space-6);">
+        <label style="font-size:14px; font-weight:500; display:block; margin-bottom:8px;">选择 PDF 文件</label>
+        <input type="file" id="pdfInput" accept=".pdf" class="input" required>
+      </div>
+      <button type="submit" class="btn btn--primary btn--full btn--lg" id="parseBtn">
+        解析词库
+      </button>
+    </form>
+
+    <div id="parseStatus" style="margin-top:16px; font-size:13px; color:var(--clr-text-muted);"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('importForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const file = document.getElementById('pdfInput').files[0];
+  if (!file) return;
+
+  const btn = document.getElementById('parseBtn');
+  const status = document.getElementById('parseStatus');
+  btn.disabled = true;
+  btn.textContent = '解析中...';
+  status.textContent = '';
+
+  const fd = new FormData();
+  fd.append('pdf', file);
+
+  try {
+    const resp = await fetch('/import/parse', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (data.error) {
+      status.textContent = '❌ ' + data.error;
+      btn.disabled = false;
+      btn.textContent = '解析词库';
+      return;
+    }
+    status.textContent = `✓ 解析完成，共 ${data.count} 个词条，正在跳转预览页...`;
+    window.location.href = '/import/preview';
+  } catch (err) {
+    status.textContent = '❌ 解析失败，请重试';
+    btn.disabled = false;
+    btn.textContent = '解析词库';
+  }
+});
+</script>
+{% endblock %}

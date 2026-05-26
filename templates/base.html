@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}雅思词汇{% endblock %} — 单词记忆</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav__inner">
+      <a href="{{ url_for('index') }}" class="nav__brand">单词记忆</a>
+      <div class="nav__links">
+        <a href="{{ url_for('index') }}" class="nav__link {% if request.endpoint == 'index' %}nav__link--active{% endif %}">首页</a>
+        <a href="{{ url_for('library') }}" class="nav__link {% if request.endpoint == 'library' %}nav__link--active{% endif %}">词库管理</a>
+        <a href="{{ url_for('settings') }}" class="nav__link {% if request.endpoint == 'settings' %}nav__link--active{% endif %}">设置</a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

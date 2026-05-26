@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}测验{% endblock %}
+
+{% block content %}
+<div class="quiz-wrap">
+
+  <!-- 顶部进度 -->
+  <div class="progress-top">
+    <span class="progress-top__count">{{ current }} / {{ total }}</span>
+    {% if mode == 'learn' %}
+    <form method="post" action="{{ url_for('learn_abandon') }}"
+          onsubmit="return confirm('确定放弃今日学习？')">
+      <button type="submit" class="btn btn--ghost" style="padding:4px 12px; font-size:12px;">放弃今日</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <!-- 题目 -->
+  <div class="quiz-english">{{ question.english }}</div>
+
+  <!-- 选项 -->
+  <form method="post" action="{{ url_for('quiz_answer') }}" id="quizForm">
+    <div class="quiz-options">
+      {% set letters = ['A', 'B', 'C', 'D'] %}
+      {% for i, opt in question.options | enumerate %}
+      <button type="submit" name="answer" value="{{ opt }}" class="quiz-option">
+        <span class="quiz-option__letter">{{ letters[i] }}</span>
+        <span>{{ opt }}</span>
+      </button>
+      {% endfor %}
+    </div>
+  </form>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 键盘快捷键 A/B/C/D
+document.addEventListener('keydown', (e) => {
+  const map = { 'KeyA': 0, 'KeyB': 1, 'KeyC': 2, 'KeyD': 3 };
+  if (map[e.code] !== undefined) {
+    const btns = document.querySelectorAll('.quiz-option');
+    if (btns[map[e.code]]) btns[map[e.code]].click();
+  }
+});
+</script>
+{% endblock %}

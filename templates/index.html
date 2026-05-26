@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}首页{% endblock %}
+
+{% block content %}
+{% if no_lists %}
+<div class="empty-state">
+  <div class="empty-state__icon">📚</div>
+  <div class="empty-state__title">开始你的雅思词汇之旅</div>
+  <div class="empty-state__desc">导入 PDF 词表，系统将帮你科学记忆每一个单词</div>
+  <a href="{{ url_for('import_page') }}" class="btn btn--primary btn--lg">导入词库</a>
+</div>
+
+{% else %}
+<div class="container" style="padding-top: 40px; padding-bottom: 60px;">
+
+  <!-- 词库选择 -->
+  <div class="flex items-center justify-between mb-4">
+    <form method="post" action="{{ url_for('switch_list') }}" id="switchForm">
+      <div class="select-wrap">
+        <select name="list_id" onchange="document.getElementById('switchForm').submit()">
+          {% for lst in all_lists %}
+          <option value="{{ lst.id }}" {% if lst.id == current_list.id %}selected{% endif %}>
+            {{ lst.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+    </form>
+    <div class="streak-badge">🔥 连续打卡 {{ streak }} 天</div>
+  </div>
+
+  <!-- Metric Cards -->
+  <div class="metric-grid">
+    <div class="metric-card">
+      <div class="metric-card__number">{{ stats.total }}</div>
+      <div class="metric-card__label">词库总数</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-card__number metric-card__number--red">{{ stats.mastered }}</div>
+      <div class="metric-card__label">已掌握</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-card__number metric-card__number--blue">{{ stats.unmastered }}</div>
+      <div class="metric-card__label">未掌握</div>
+    </div>
+  </div>
+
+  <!-- 进度条 -->
+  <div class="progress-wrap">
+    <div class="progress-label">
+      <span>学习进度</span>
+      <span>{% if stats.total > 0 %}{{ ((stats.mastered / stats.total) * 100) | int }}%{% else %}0%{% endif %}</span>
+    </div>
+    <div class="progress-bar">
+      <div class="progress-bar__fill" style="width: {% if stats.total > 0 %}{{ ((stats.mastered / stats.total) * 100) | int }}{% else %}0{% endif %}%"></div>
+    </div>
+  </div>
+
+  <!-- 今日状态 -->
+  <div class="divider"></div>
+  {% if completed_today %}
+  <div style="text-align:center; font-size:18px; font-weight:600; color: var(--clr-red); margin-bottom: 24px;">
+    今日已通关 ✅
+  </div>
+  {% elif active_session %}
+  <div style="text-align:center; margin-bottom: 24px;">
+    <span style="font-size:14px; color:var(--clr-text-secondary);">上次学习未完成</span>
+  </div>
+  {% endif %}
+
+  <!-- 操作按钮 -->
+  <div class="action-row" style="justify-content: center;">
+    {% if stats.unmastered == 0 and stats.total > 0 %}
+      <button class="btn btn--primary btn--lg" disabled>开始学习</button>
+      <span style="font-size:13px; color:var(--clr-text-muted); align-self:center;">词库已全部掌握，去测试模式巩固吧 →</span>
+    {% else %}
+      {% if active_session and not completed_today %}
+      <a href="{{ url_for('learn_continue') }}" class="btn btn--ghost">继续上次学习</a>
+      {% endif %}
+      <a href="{{ url_for('learn_setup') }}" class="btn btn--primary btn--lg">开始学习</a>
+    {% endif %}
+
+    <a href="{{ url_for('test_setup') }}" class="btn btn--ghost">测试模式</a>
+    <a href="{{ url_for('library') }}" class="btn btn--ghost">词库管理</a>
+  </div>
+
+  <div class="divider"></div>
+  <div style="text-align:center;">
+    <a href="{{ url_for('import_page') }}" class="text-sm text-muted" style="text-decoration:none;">+ 导入新词库</a>
+  </div>
+
+</div>
+{% endif %}
+{% endblock %}

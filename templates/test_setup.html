@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}测试设置{% endblock %}
+
+{% block content %}
+<div class="container" style="padding-top:80px; padding-bottom:60px; max-width:480px;">
+  <div class="page-title">测试模式</div>
+  <div class="page-subtitle">从全词库（{{ stats.total }} 个单词）随机出题</div>
+
+  <div class="card">
+    <form method="post" action="{{ url_for('test_start') }}" id="testForm">
+      <div style="text-align:center; margin-bottom:var(--space-8);">
+        <label style="font-size:14px; font-weight:500; display:block; margin-bottom:16px; color:var(--clr-text-secondary);">
+          测试题数
+        </label>
+        <input type="number" name="m" id="mInput" class="input input--number"
+               value="{{ default_m }}" min="1" max="{{ stats.total }}" required>
+        <div id="hint" style="font-size:12px; color:var(--clr-text-muted); margin-top:8px;"></div>
+      </div>
+
+      <div class="action-row" style="justify-content:center;">
+        <a href="{{ url_for('index') }}" class="btn btn--ghost">取消</a>
+        <button type="submit" class="btn btn--primary btn--lg" id="startBtn">开始测试</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const max = {{ stats.total }};
+const input = document.getElementById('mInput');
+const hint = document.getElementById('hint');
+const btn = document.getElementById('startBtn');
+
+function validate() {
+  const v = parseInt(input.value) || 0;
+  if (v > max) {
+    hint.textContent = `最多 ${max} 题`;
+    btn.disabled = true;
+  } else if (v < 1) {
+    hint.textContent = '至少选择 1 题';
+    btn.disabled = true;
+  } else {
+    hint.textContent = '';
+    btn.disabled = false;
+  }
+}
+
+input.addEventListener('input', validate);
+validate();
+</script>
+{% endblock %}

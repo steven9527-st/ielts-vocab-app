@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}词库管理{% endblock %}
+
+{% block content %}
+<div class="container" style="padding-top:40px; padding-bottom:60px;">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <div class="page-title">{{ current_list.name }}</div>
+      <div class="page-subtitle">共 {{ words | length }} 个单词</div>
+    </div>
+    <div class="flex gap-3">
+      <a href="{{ url_for('import_page') }}" class="btn btn--ghost">导入新词库</a>
+    </div>
+  </div>
+
+  <!-- 搜索框 -->
+  <div style="margin-bottom:16px;">
+    <input type="text" id="searchInput" class="input" placeholder="搜索英文或中文..."
+           style="max-width:360px;" oninput="filterTable()">
+  </div>
+
+  <div class="table-wrap">
+    <table id="wordsTable">
+      <thead>
+        <tr>
+          <th>英文</th>
+          <th>中文释义</th>
+          <th>状态</th>
+          <th style="width:120px;">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for w in words %}
+        <tr data-id="{{ w.id }}" data-english="{{ w.english | lower }}" data-chinese="{{ w.chinese }}">
+          <td>
+            <span class="word-english text-mono" style="font-weight:500;">{{ w.english }}</span>
+          </td>
+          <td>
+            <span class="word-chinese" style="font-size:14px;">{{ w.chinese }}</span>
+          </td>
+          <td>
+            <button class="badge {% if w.status == 'mastered' %}badge--green{% else %}badge--blue{% endif %} status-btn"
+                    style="cursor:pointer; border:none;"
+                    data-id="{{ w.id }}"
+                    data-status="{{ w.status }}"
+                    title="点击切换状态">
+              {{ '已掌握' if w.status == 'mastered' else '未掌握' }}
+            </button>
+          </td>
+          <td>
+            <div class="flex gap-2">
+              <button class="btn btn--ghost edit-btn" style="padding:4px 10px; font-size:12px;"
+                      data-id="{{ w.id }}">编辑</button>
+              <button class="btn btn--danger del-btn" style="padding:4px 10px; font-size:12px;"
+                      data-id="{{ w.id }}">删除</button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 编辑弹窗 -->
+<div id="editModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.3); z-index:200; align-items:center; justify-content:center;">
+  <div class="card" style="width:100%; max-width:480px; margin:20px;">
+    <div style="font-size:18px; font-weight:600; letter-spacing:-0.5px; margin-bottom:var(--space-6);">编辑单词</div>
+    <div style="margin-bottom:16px;">
+      <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">英文</label>
+      <input type="text" id="editEnglish" class="input">
+    </div>
+    <div style="margin-bottom:24px;">
+      <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">中文释义</label>
+      <textarea id="editChinese" class="input" rows="3" style="resize:vertical;"></textarea>
+    </div>
+    <div class="action-row" style="justify-content:flex-end;">
+      <button class="btn btn--ghost" onclick="closeModal()">取消</button>
+      <button class="btn btn--primary" id="saveEditBtn">保存</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterTable() {
+  const q = document.getElementById('searchInput').value.toLowerCase();
+  document.querySelectorAll('#wordsTable tbody tr').forEach(tr => {
+    const en = tr.dataset.english || '';
+    const zh = (tr.dataset.chinese || '').toLowerCase();
+    tr.style.display = (en.includes(q) || zh.includes(q)) ? '' : 'none';
+  });
+}
+
+// 状态切换
+document.querySelectorAll('.status-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const id = btn.dataset.id;
+    const cur = btn.dataset.status;
+    const next = cur === 'mastered' ? 'unmastered' : 'mastered';
+    const resp = await fetch(`/api/word/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: next })
+    });
+    if ((await resp.json()).ok) {
+      btn.dataset.status = next;
+      btn.textContent = next === 'mastered' ? '已掌握' : '未掌握';
+      btn.className = `badge ${next === 'mastered' ? 'badge--green' : 'badge--blue'} status-btn`;
+    }
+  });
+});
+
+// 删除
+document.querySelectorAll('.del-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    if (!confirm('确定删除这个单词？')) return;
+    const id = btn.dataset.id;
+    const resp = await fetch(`/api/word/${id}`, { method: 'DELETE' });
+    if ((await resp.json()).ok) {
+      btn.closest('tr').remove();
+    }
+  });
+});
+
+// 编辑
+let editingId = null;
+function closeModal() {
+  document.getElementById('editModal').style.display = 'none';
+  editingId = null;
+}
+document.querySelectorAll('.edit-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tr = btn.closest('tr');
+    editingId = btn.dataset.id;
+    document.getElementById('editEnglish').value = tr.querySelector('.word-english').textContent.trim();
+    document.getElementById('editChinese').value = tr.querySelector('.word-chinese').textContent.trim();
+    document.getElementById('editModal').style.display = 'flex';
+  });
+});
+document.getElementById('saveEditBtn').addEventListener('click', async () => {
+  const english = document.getElementById('editEnglish').value.trim();
+  const chinese = document.getElementById('editChinese').value.trim();
+  if (!english || !chinese) return;
+  const resp = await fetch(`/api/word/${editingId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ english, chinese })
+  });
+  if ((await resp.json()).ok) {
+    const tr = document.querySelector(`tr[data-id="${editingId}"]`);
+    tr.querySelector('.word-english').textContent = english;
+    tr.querySelector('.word-chinese').textContent = chinese;
+    tr.dataset.english = english.toLowerCase();
+    tr.dataset.chinese = chinese;
+    closeModal();
+  }
+});
+document.getElementById('editModal').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('editModal')) closeModal();
+});
+</script>
+{% endblock %}

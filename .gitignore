@@ -1,0 +1,8 @@
+venv/
+__pycache__/
+*.pyc
+vocab.db
+vocab.db-shm
+vocab.db-wal
+.tmp_parse/
+*.json.bak

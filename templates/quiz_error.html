@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}提示{% endblock %}
+{% block content %}
+<div class="empty-state">
+  <div class="empty-state__icon">⚠️</div>
+  <div class="empty-state__title">无法进行测验</div>
+  <div class="empty-state__desc">{{ message }}</div>
+  <a href="{{ url_for('index') }}" class="btn btn--primary">返回首页</a>
+</div>
+{% endblock %}

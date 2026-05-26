@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}翻卡学习{% endblock %}
+
+{% block content %}
+<div class="flashcard-wrap">
+
+  <!-- 顶部进度 -->
+  <div class="progress-top" style="width:100%; max-width:580px;">
+    <span class="progress-top__count">{{ current }} / {{ total }}</span>
+    <form method="post" action="{{ url_for('learn_abandon') }}" onsubmit="return confirm('确定放弃今日学习？本次学习的单词不会标记为已掌握。')">
+      <button type="submit" class="btn btn--ghost" style="padding:4px 12px; font-size:12px;">放弃今日</button>
+    </form>
+  </div>
+
+  <!-- 翻卡 -->
+  <div class="flashcard" id="card" tabindex="0">
+    <div class="flashcard__inner">
+      <div class="flashcard__front">
+        <div class="flashcard__word">{{ word.english }}</div>
+        <div class="flashcard__hint">点击查看释义</div>
+      </div>
+      <div class="flashcard__back">
+        <div class="flashcard__meaning">{{ word.chinese }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 下一张按钮（翻转后才显示） -->
+  <div id="nextWrap" style="margin-top:32px; display:none;">
+    <form method="post" action="{{ url_for('learn_next') }}">
+      <button type="submit" class="btn btn--primary btn--lg">
+        下一张 →
+      </button>
+    </form>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const card = document.getElementById('card');
+const nextWrap = document.getElementById('nextWrap');
+let flipped = false;
+
+function flip() {
+  if (!flipped) {
+    flipped = true;
+    card.classList.add('flipped');
+    nextWrap.style.display = 'block';
+    card.style.cursor = 'default';
+  }
+}
+
+card.addEventListener('click', flip);
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); flip(); }
+  if (e.code === 'ArrowRight' && flipped) {
+    nextWrap.querySelector('form').submit();
+  }
+});
+</script>
+{% endblock %}
