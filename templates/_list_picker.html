@@ -1,0 +1,65 @@
+{# 词库选择浮层（首次进学习/测试时弹出，仅在 >=2 个词库时）#}
+<div class="list-picker__overlay" id="listPickerOverlay">
+  <div class="list-picker__modal">
+    <div class="list-picker__title">选择词库</div>
+    <div class="list-picker__subtitle">本次会话将使用该词库进行学习或测试。</div>
+    <div class="list-picker__list" id="listPickerList">
+      {% for l in nav_all_lists %}
+      <label class="list-picker__option{% if l.id == nav_current_list_id %} list-picker__option--selected{% endif %}"
+             data-list-id="{{ l.id }}">
+        <input type="radio" name="picker_list_id" value="{{ l.id }}"
+               {% if l.id == nav_current_list_id %}checked{% endif %}>
+        <span class="list-picker__option-name">{{ l.name }}</span>
+      </label>
+      {% endfor %}
+    </div>
+    <div class="action-row" style="justify-content:flex-end;">
+      <button type="button" class="btn btn--primary" id="listPickerConfirm">确认</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var overlay = document.getElementById('listPickerOverlay');
+  if (!overlay) return;
+  var listEl = document.getElementById('listPickerList');
+  var confirmBtn = document.getElementById('listPickerConfirm');
+
+  // 选中态切换
+  listEl.querySelectorAll('.list-picker__option').forEach(function(opt) {
+    opt.addEventListener('click', function() {
+      listEl.querySelectorAll('.list-picker__option').forEach(function(o) {
+        o.classList.remove('list-picker__option--selected');
+      });
+      opt.classList.add('list-picker__option--selected');
+      var radio = opt.querySelector('input[type=radio]');
+      if (radio) radio.checked = true;
+    });
+  });
+
+  confirmBtn.addEventListener('click', async function() {
+    var checked = listEl.querySelector('input[type=radio]:checked');
+    if (!checked) { alert('请选择一个词库'); return; }
+    var listId = parseInt(checked.value, 10);
+    confirmBtn.disabled = true;
+    try {
+      var resp = await fetch('/api/pick_list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ list_id: listId })
+      });
+      var data = await resp.json();
+      if (resp.ok && data.ok) {
+        window.location.reload();
+      } else {
+        alert(data.error || '选择失败');
+        confirmBtn.disabled = false;
+      }
+    } catch (err) {
+      alert('网络错误：' + err.message);
+      confirmBtn.disabled = false;
+    }
+  });
+})();
+</script>

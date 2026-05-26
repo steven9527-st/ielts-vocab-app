@@ -4,6 +4,12 @@
 {% block content %}
 <div class="result-wrap">
 
+  {% if test_type == 'audio' %}
+  <div class="test-type-badge test-type-badge--audio">🔊 听力测试</div>
+  {% else %}
+  <div class="test-type-badge">📝 文字测试</div>
+  {% endif %}
+
   <div class="result-score {% if accuracy >= 70 %}result-score--pass{% else %}result-score--fail{% endif %}">
     {{ accuracy }}%
   </div>
@@ -15,6 +21,7 @@
   <div class="action-row" style="justify-content:center; margin-bottom:var(--space-8);">
     <form method="post" action="{{ url_for('test_start') }}">
       <input type="hidden" name="m" value="{{ test_count }}">
+      <input type="hidden" name="test_type" value="{{ test_type or 'text' }}">
       <button type="submit" class="btn btn--primary">再来一次</button>
     </form>
     <a href="{{ url_for('index') }}" class="btn btn--ghost">返回首页</a>

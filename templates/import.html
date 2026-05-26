@@ -4,16 +4,20 @@
 {% block content %}
 <div class="container" style="padding-top:60px; padding-bottom:60px;">
   <div class="page-title">导入词库</div>
-  <div class="page-subtitle">支持「序号. 单词 英[音标] 词性+释义」格式的 PDF 词表</div>
+  <div class="page-subtitle">支持 PDF 词表 / Excel (.xlsx) / CSV 文件</div>
 
   <div class="card" style="max-width:480px;">
     <form id="importForm">
       <div style="margin-bottom: var(--space-6);">
-        <label style="font-size:14px; font-weight:500; display:block; margin-bottom:8px;">选择 PDF 文件</label>
-        <input type="file" id="pdfInput" accept=".pdf" class="input" required>
+        <label style="font-size:14px; font-weight:500; display:block; margin-bottom:8px;">选择文件</label>
+        <input type="file" id="pdfInput" accept=".pdf,.xlsx,.csv" class="input" required>
+        <div style="font-size:12px; color:var(--clr-text-muted); margin-top:8px;">
+          PDF：「序号. 单词 英[音标] 词性+释义」格式<br>
+          Excel/CSV：任意列结构，下一步选择列含义
+        </div>
       </div>
       <button type="submit" class="btn btn--primary btn--full btn--lg" id="parseBtn">
-        解析词库
+        解析文件
       </button>
     </form>
 
@@ -29,6 +33,13 @@ document.getElementById('importForm').addEventListener('submit', async (e) => {
   const file = document.getElementById('pdfInput').files[0];
   if (!file) return;
 
+  // 前端再校验一次扩展名（防御 accept 被绕过）
+  const name = file.name.toLowerCase();
+  if (!(name.endsWith('.pdf') || name.endsWith('.xlsx') || name.endsWith('.csv'))) {
+    document.getElementById('parseStatus').textContent = '❌ 仅支持 .pdf / .xlsx / .csv';
+    return;
+  }
+
   const btn = document.getElementById('parseBtn');
   const status = document.getElementById('parseStatus');
   btn.disabled = true;
@@ -36,23 +47,24 @@ document.getElementById('importForm').addEventListener('submit', async (e) => {
   status.textContent = '';
 
   const fd = new FormData();
-  fd.append('pdf', file);
+  fd.append('pdf', file);  // 字段名沿用 'pdf'（后端按扩展名分发）
 
   try {
     const resp = await fetch('/import/parse', { method: 'POST', body: fd });
     const data = await resp.json();
-    if (data.error) {
-      status.textContent = '❌ ' + data.error;
+    if (!resp.ok || data.error) {
+      status.textContent = '❌ ' + (data.error || '解析失败');
       btn.disabled = false;
-      btn.textContent = '解析词库';
+      btn.textContent = '解析文件';
       return;
     }
-    status.textContent = `✓ 解析完成，共 ${data.count} 个词条，正在跳转预览页...`;
-    window.location.href = '/import/preview';
+    const next = data.next || '/import/preview';
+    status.textContent = `✓ 读取完成（${data.count} 行），正在跳转...`;
+    window.location.href = next;
   } catch (err) {
     status.textContent = '❌ 解析失败，请重试';
     btn.disabled = false;
-    btn.textContent = '解析词库';
+    btn.textContent = '解析文件';
   }
 });
 </script>

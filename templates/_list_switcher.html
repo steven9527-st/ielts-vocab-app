@@ -1,0 +1,91 @@
+{# 顶部 nav 词库切换组件（全站可见） #}
+{% if nav_all_lists and nav_all_lists|length > 0 %}
+{% set current_name = (nav_all_lists | selectattr('id', 'equalto', nav_current_list_id) | list | first).name if (nav_all_lists | selectattr('id', 'equalto', nav_current_list_id) | list) else nav_all_lists[0].name %}
+<div class="list-switcher{% if nav_all_lists|length < 2 %} list-switcher--single{% endif %}"
+     data-in-progress="{{ '1' if nav_in_progress else '0' }}"
+     data-current-id="{{ nav_current_list_id or nav_all_lists[0].id }}">
+  <button type="button" class="list-switcher__trigger" id="listSwitcherTrigger"
+          {% if nav_all_lists|length < 2 %}disabled{% endif %}>
+    <span class="list-switcher__icon">📚</span>
+    <span class="list-switcher__name">{{ current_name }}</span>
+    {% if nav_all_lists|length >= 2 %}<span class="list-switcher__arrow">▾</span>{% endif %}
+  </button>
+  {% if nav_all_lists|length >= 2 %}
+  <div class="list-switcher__menu" id="listSwitcherMenu" style="display:none;">
+    {% for l in nav_all_lists %}
+    <button type="button" class="list-switcher__item{% if l.id == nav_current_list_id %} list-switcher__item--active{% endif %}"
+            data-list-id="{{ l.id }}">
+      <span class="list-switcher__check">{% if l.id == nav_current_list_id %}✓{% endif %}</span>
+      <span>{{ l.name }}</span>
+    </button>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+<script>
+(function() {
+  var trigger = document.getElementById('listSwitcherTrigger');
+  var menu = document.getElementById('listSwitcherMenu');
+  var root = trigger ? trigger.closest('.list-switcher') : null;
+  if (!trigger || !menu || !root) return;
+
+  trigger.addEventListener('click', function(e) {
+    e.stopPropagation();
+    menu.style.display = (menu.style.display === 'none') ? 'block' : 'none';
+  });
+  document.addEventListener('click', function(e) {
+    if (!root.contains(e.target)) menu.style.display = 'none';
+  });
+
+  menu.querySelectorAll('.list-switcher__item').forEach(function(btn) {
+    btn.addEventListener('click', async function() {
+      var targetId = parseInt(btn.getAttribute('data-list-id'), 10);
+      var currentId = parseInt(root.getAttribute('data-current-id'), 10);
+      if (targetId === currentId) {
+        menu.style.display = 'none';
+        return;
+      }
+      var inProgress = root.getAttribute('data-in-progress') === '1';
+      var abandon = false;
+      if (inProgress) {
+        if (!confirm('将放弃当前学习/测试进度，确认切换词库？')) {
+          menu.style.display = 'none';
+          return;
+        }
+        abandon = true;
+      }
+      try {
+        var resp = await fetch('/api/switch_list_safe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ list_id: targetId, abandon: abandon })
+        });
+        var data = await resp.json();
+        if (resp.ok && data.ok) {
+          // 切换成功 → 进行中页面跳首页；其它页面就地刷新
+          if (inProgress) {
+            window.location.href = '/';
+          } else {
+            window.location.reload();
+          }
+        } else if (resp.status === 409 && data.has_progress) {
+          if (confirm('检测到进行中的学习/测试，是否放弃并切换？')) {
+            var resp2 = await fetch('/api/switch_list_safe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ list_id: targetId, abandon: true })
+            });
+            if (resp2.ok) window.location.href = '/';
+          }
+        } else {
+          alert(data.error || '切换失败');
+        }
+      } catch (err) {
+        alert('网络错误：' + err.message);
+      }
+    });
+  });
+})();
+</script>
+{% endif %}

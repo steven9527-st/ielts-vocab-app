@@ -8,6 +8,25 @@
 
   <div class="card">
     <form method="post" action="{{ url_for('test_start') }}" id="testForm">
+
+      <!-- 测试类型 -->
+      <label style="font-size:14px; font-weight:500; display:block; margin-bottom:10px; color:var(--clr-text-secondary); text-align:center;">
+        测试类型
+      </label>
+      <div class="test-type-group">
+        <label class="test-type-option test-type-option--selected" data-type="text">
+          <input type="radio" name="test_type" value="text" checked>
+          <span class="test-type-option__icon">📝</span>
+          <span class="test-type-option__label">文字测试</span>
+        </label>
+        <label class="test-type-option" data-type="audio">
+          <input type="radio" name="test_type" value="audio">
+          <span class="test-type-option__icon">🔊</span>
+          <span class="test-type-option__label">听力测试</span>
+        </label>
+      </div>
+
+      <!-- 题数 -->
       <div style="text-align:center; margin-bottom:var(--space-8);">
         <label style="font-size:14px; font-weight:500; display:block; margin-bottom:16px; color:var(--clr-text-secondary);">
           测试题数
@@ -24,6 +43,10 @@
     </form>
   </div>
 </div>
+
+{% if show_picker %}
+  {% include '_list_picker.html' %}
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -49,5 +72,17 @@ function validate() {
 
 input.addEventListener('input', validate);
 validate();
+
+// 测试类型单选切换
+document.querySelectorAll('.test-type-option').forEach(function(opt) {
+  opt.addEventListener('click', function() {
+    document.querySelectorAll('.test-type-option').forEach(function(o) {
+      o.classList.remove('test-type-option--selected');
+    });
+    opt.classList.add('test-type-option--selected');
+    const r = opt.querySelector('input[type=radio]');
+    if (r) r.checked = true;
+  });
+});
 </script>
 {% endblock %}

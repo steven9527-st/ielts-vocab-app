@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block title %}列映射{% endblock %}
+
+{% block content %}
+<div class="container" style="padding-top:40px; padding-bottom:60px;">
+  <div class="page-title">列映射</div>
+  <div class="page-subtitle">
+    <span class="text-mono">{{ filename }}</span> · 共 {{ total_rows }} 行 · 请确认列对应
+  </div>
+
+  <div class="card" style="max-width:920px;">
+
+    <!-- 列选择区 -->
+    <div style="display:flex; gap:var(--space-6); flex-wrap:wrap; margin-bottom:var(--space-6);">
+      <div>
+        <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">
+          英文列 <span style="color:#cc2200;">*</span>
+        </label>
+        <div class="select-wrap">
+          <select id="englishCol">
+            {% for label in col_labels %}
+            <option value="{{ loop.index0 }}"
+              {% if loop.index0 == guess.english_col %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">
+          中文列 <span style="color:#cc2200;">*</span>
+        </label>
+        <div class="select-wrap">
+          <select id="chineseCol">
+            {% for label in col_labels %}
+            <option value="{{ loop.index0 }}"
+              {% if loop.index0 == guess.chinese_col %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div style="display:flex; align-items:flex-end;">
+        <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" id="skipFirstRow"
+            {% if guess.skip_first_row %}checked{% endif %}>
+          第一行是表头（跳过）
+        </label>
+      </div>
+    </div>
+
+    <!-- 自动识别提示 -->
+    <div style="margin-bottom:var(--space-4); font-size:13px; line-height:1.8;">
+      {% if guess.phonetic_col >= 0 %}
+      <div style="color:#0a7a40;">✓ 自动识别到音标列：<strong>{{ guess.phonetic_label or col_labels[guess.phonetic_col] }}</strong></div>
+      {% else %}
+      <div class="text-muted">· 未识别到音标列（导入后音标字段为空）</div>
+      {% endif %}
+      {% if guess.pos_col >= 0 %}
+      <div style="color:#0a7a40;">✓ 自动识别到词性列：<strong>{{ guess.pos_label or col_labels[guess.pos_col] }}</strong></div>
+      {% else %}
+      <div class="text-muted">· 未识别到词性列（导入后词性字段为空）</div>
+      {% endif %}
+    </div>
+
+    <!-- 预览表格 -->
+    <div style="margin-bottom:var(--space-4); font-size:13px; font-weight:500;">预览前 {{ preview_rows | length }} 行：</div>
+    <div class="table-wrap" style="margin-bottom:var(--space-6);">
+      <table id="previewTable">
+        <thead>
+          <tr>
+            <th style="width:36px;">#</th>
+            {% for label in col_labels %}
+            <th data-col="{{ loop.index0 }}">{{ label }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in preview_rows %}
+          <tr>
+            <td class="text-mono text-sm text-muted">{{ loop.index }}</td>
+            {% for cell in row %}
+            <td data-col="{{ loop.index0 }}" style="font-size:13px; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+              {{ cell }}
+            </td>
+            {% endfor %}
+            {# 末尾补齐空单元格 #}
+            {% for _ in range(n_cols - row | length) %}
+            <td data-col="{{ row | length + loop.index0 }}"></td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 操作按钮 -->
+    <div class="action-row" style="justify-content:flex-end;">
+      <a href="{{ url_for('import_page') }}" class="btn btn--ghost">取消</a>
+      <button type="button" class="btn btn--primary btn--lg" id="continueBtn">继续 →</button>
+    </div>
+
+    <div id="applyStatus" style="margin-top:12px; font-size:13px;"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const englishSel = document.getElementById('englishCol');
+const chineseSel = document.getElementById('chineseCol');
+const skipFirstCb = document.getElementById('skipFirstRow');
+const continueBtn = document.getElementById('continueBtn');
+const status = document.getElementById('applyStatus');
+
+const PHONETIC_COL = {{ guess.phonetic_col }};
+const POS_COL = {{ guess.pos_col }};
+
+const COLOR_EN = '#f0f7ff';    // 浅蓝 — 英文列
+const COLOR_ZH = '#fdf2f7';    // 浅粉 — 中文列
+const COLOR_PHON = '#fef9e6';  // 浅黄 — 音标列
+const COLOR_POS = '#f0f9eb';   // 浅绿 — 词性列
+
+function highlightCol(ci, color) {
+  document.querySelectorAll(`#previewTable [data-col="${ci}"]`).forEach(el => {
+    el.style.background = color;
+  });
+}
+
+function refreshHighlight() {
+  // 清除所有高亮
+  document.querySelectorAll('#previewTable [data-col]').forEach(el => {
+    el.style.background = '';
+  });
+  // 重新应用（顺序：音标/词性先，英中后；后者覆盖前者）
+  if (PHONETIC_COL >= 0) highlightCol(PHONETIC_COL, COLOR_PHON);
+  if (POS_COL >= 0) highlightCol(POS_COL, COLOR_POS);
+  highlightCol(parseInt(englishSel.value), COLOR_EN);
+  highlightCol(parseInt(chineseSel.value), COLOR_ZH);
+}
+
+englishSel.addEventListener('change', refreshHighlight);
+chineseSel.addEventListener('change', refreshHighlight);
+refreshHighlight();
+
+continueBtn.addEventListener('click', async () => {
+  const en = parseInt(englishSel.value);
+  const zh = parseInt(chineseSel.value);
+  if (en === zh) {
+    status.textContent = '❌ 英文列和中文列不能相同';
+    status.style.color = '#cc2200';
+    return;
+  }
+
+  continueBtn.disabled = true;
+  continueBtn.textContent = '处理中...';
+  status.textContent = '';
+
+  try {
+    const resp = await fetch('/import/excel_apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        english_col: en,
+        chinese_col: zh,
+        phonetic_col: PHONETIC_COL,
+        pos_col: POS_COL,
+        skip_first_row: skipFirstCb.checked,
+      })
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      status.textContent = '❌ ' + (data.error || '处理失败');
+      status.style.color = '#cc2200';
+      continueBtn.disabled = false;
+      continueBtn.textContent = '继续 →';
+      return;
+    }
+    status.textContent = `✓ 转换完成（${data.count} 条），跳转预览...`;
+    status.style.color = '#0a7a40';
+    window.location.href = data.next || '/import/preview';
+  } catch (err) {
+    status.textContent = '❌ 网络错误：' + err.message;
+    status.style.color = '#cc2200';
+    continueBtn.disabled = false;
+    continueBtn.textContent = '继续 →';
+  }
+});
+</script>
+{% endblock %}

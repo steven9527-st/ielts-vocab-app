@@ -10,6 +10,7 @@ from flask import (Flask, jsonify, redirect, render_template, request,
 
 from database import get_db, init_db
 from pdf_parser import parse_pdf
+from excel_parser import (apply_mapping, guess_columns, parse_table_raw)
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -79,6 +80,35 @@ def _delete_quiz_data(token: str):
         os.unlink(path)
 
 
+# ── Excel/CSV 原始数据服务端存储 ───────────────────────────
+
+def _save_excel_raw(data: dict) -> str:
+    """将 Excel/CSV 解析的原始 rows 保存到服务端临时文件，返回 token"""
+    token = str(uuid.uuid4())
+    path = os.path.join(_TMP_DIR, f'excel_{token}.json')
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False)
+    return token
+
+
+def _load_excel_raw(token: str) -> dict:
+    if not token:
+        return {}
+    path = os.path.join(_TMP_DIR, f'excel_{token}.json')
+    if not os.path.exists(path):
+        return {}
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def _delete_excel_raw(token: str):
+    if not token:
+        return
+    path = os.path.join(_TMP_DIR, f'excel_{token}.json')
+    if os.path.exists(path):
+        os.unlink(path)
+
+
 # ─────────────────────────────────────────
 # 初始化
 # ─────────────────────────────────────────
@@ -86,6 +116,32 @@ def _delete_quiz_data(token: str):
 @app.before_request
 def setup():
     init_db()
+
+
+# ─────────────────────────────────────────
+# 全局模板上下文（供顶部 nav 词库切换组件使用）
+# ─────────────────────────────────────────
+
+@app.context_processor
+def inject_nav_data():
+    """为 base.html 顶部 nav 注入词库列表与进行中状态"""
+    try:
+        db = get_db()
+        all_lists = [dict(r) for r in db.execute(
+            'SELECT id, name FROM word_lists ORDER BY created_at ASC'
+        ).fetchall()]
+        db.close()
+    except Exception:
+        all_lists = []
+
+    current_id = session.get('list_id')
+    in_progress_endpoints = {'learn_card', 'learn_quiz', 'quiz_question'}
+    in_progress = request.endpoint in in_progress_endpoints
+    return {
+        'nav_all_lists': all_lists,
+        'nav_current_list_id': current_id,
+        'nav_in_progress': in_progress,
+    }
 
 
 # ─────────────────────────────────────────
@@ -228,7 +284,82 @@ def switch_list():
     list_id = request.form.get('list_id', type=int)
     if list_id:
         session['list_id'] = list_id
+        session['list_picked'] = True
     return redirect(url_for('index'))
+
+
+@app.route('/api/switch_list_safe', methods=['POST'])
+def api_switch_list_safe():
+    """全站顶部 nav 使用的安全切换接口。
+    若当前有进行中的 learn_session 或 quiz_token，需前端传 abandon=true 才会清理并切换。
+    """
+    data = request.get_json(silent=True) or {}
+    target_list_id = data.get('list_id')
+    abandon = bool(data.get('abandon', False))
+
+    if not target_list_id:
+        return jsonify({'error': '缺少 list_id'}), 400
+
+    # 校验词库存在
+    db = get_db()
+    row = db.execute('SELECT id FROM word_lists WHERE id=?', (target_list_id,)).fetchone()
+    db.close()
+    if not row:
+        return jsonify({'error': '词库不存在'}), 404
+
+    # 检测当前是否有进行中的状态
+    list_id = get_current_list_id()
+    has_active_learn = False
+    if list_id:
+        active = get_active_session(list_id)
+        has_active_learn = active is not None
+    has_active_quiz = bool(session.get('quiz_token'))
+    has_progress = has_active_learn or has_active_quiz
+
+    if has_progress and not abandon:
+        return jsonify({'error': '存在进行中的学习或测试', 'has_progress': True}), 409
+
+    # 需要 abandon：清理 learn_session 与 quiz
+    if has_progress:
+        if has_active_learn:
+            sess_id = session.get('learn_session_id')
+            if sess_id:
+                db = get_db()
+                db.execute("UPDATE learn_session SET status='abandoned' WHERE id=?", (sess_id,))
+                db.commit()
+                db.close()
+            session.pop('learn_session_id', None)
+            session.pop('learn_total', None)
+        if has_active_quiz:
+            _delete_quiz_data(session.pop('quiz_token', None))
+            session.pop('quiz_index', None)
+            session.pop('quiz_answers', None)
+            session.pop('quiz_mode', None)
+            session.pop('quiz_test_type', None)
+            session.pop('test_count', None)
+
+    session['list_id'] = int(target_list_id)
+    session['list_picked'] = True
+    return jsonify({'ok': True, 'list_id': int(target_list_id)})
+
+
+@app.route('/api/pick_list', methods=['POST'])
+def api_pick_list():
+    """词库选择浮层提交接口：仅设置 list_id 与 list_picked 标记"""
+    data = request.get_json(silent=True) or {}
+    list_id = data.get('list_id')
+    if not list_id:
+        return jsonify({'error': '缺少 list_id'}), 400
+
+    db = get_db()
+    row = db.execute('SELECT id FROM word_lists WHERE id=?', (list_id,)).fetchone()
+    db.close()
+    if not row:
+        return jsonify({'error': '词库不存在'}), 404
+
+    session['list_id'] = int(list_id)
+    session['list_picked'] = True
+    return jsonify({'ok': True})
 
 
 # ─────────────────────────────────────────
@@ -245,37 +376,173 @@ def import_parse():
     if 'pdf' not in request.files:
         return jsonify({'error': '未上传文件'}), 400
     f = request.files['pdf']
-    if not f.filename.lower().endswith('.pdf'):
-        return jsonify({'error': '仅支持 .pdf 文件'}), 400
+    filename = f.filename or ''
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ('.pdf', '.xlsx', '.csv'):
+        return jsonify({'error': '仅支持 .pdf / .xlsx / .csv 文件'}), 400
 
-    # 保存到临时文件解析
-    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+    # 保存到临时文件
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
         f.save(tmp.name)
         tmp_path = tmp.name
 
     try:
-        entries = parse_pdf(tmp_path)
+        if ext == '.pdf':
+            # ── PDF 流程：直接解析为 entries，跳预览页 ──
+            try:
+                entries = parse_pdf(tmp_path)
+            except Exception as e:
+                return jsonify({'error': f'PDF 解析失败：{e}'}), 400
+
+            # 词库间隔离：新建词库导入，无需检查其他词库的重复词
+            # 只在 entries 内部自查重（同一文件内的重复词标为 duplicate）
+            seen_in_file = set()
+            for entry in entries:
+                if entry['failed']:
+                    entry['duplicate'] = False
+                    continue
+                key = entry['english'].lower()
+                if key in seen_in_file:
+                    entry['duplicate'] = True
+                else:
+                    seen_in_file.add(key)
+                    entry['duplicate'] = False
+
+            token = _save_parse_result(entries)
+            session['import_token'] = token
+            session['import_filename'] = filename
+            return jsonify({
+                'entries': entries,
+                'count': len(entries),
+                'next': '/import/preview',
+            })
+
+        else:
+            # ── Excel/CSV 流程：先读全部 rows，跳到列映射页 ──
+            try:
+                rows = parse_table_raw(tmp_path)
+            except RuntimeError as e:
+                return jsonify({'error': str(e)}), 400
+            except Exception as e:
+                return jsonify({'error': f'文件解析失败：{e}'}), 400
+
+            token = _save_excel_raw({
+                'rows': rows,
+                'filename': filename,
+            })
+            session['excel_raw_token'] = token
+            session['import_filename'] = filename
+            return jsonify({
+                'count': len(rows),
+                'next': '/import/excel_mapping',
+            })
     finally:
-        os.unlink(tmp_path)
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
-    # 检查已有词库中的重复词
-    list_id = get_current_list_id()
-    existing = set()
-    if list_id:
-        db = get_db()
-        rows = db.execute('SELECT english FROM words WHERE list_id=?', (list_id,)).fetchall()
-        existing = {r['english'].lower() for r in rows}
-        db.close()
 
+@app.route('/import/excel_mapping')
+def import_excel_mapping():
+    token = session.get('excel_raw_token', '')
+    raw = _load_excel_raw(token)
+    rows = raw.get('rows', [])
+    filename = raw.get('filename', 'unknown')
+
+    if not rows:
+        return redirect(url_for('import_page'))
+
+    guess = guess_columns(rows)
+    preview_rows = rows[:6]  # 前 6 行用于预览（含可能的表头）
+    n_cols = len(rows[0]) if rows else 0
+    # 列标签 A/B/C/D... + 表头单元格（若有）
+    first_row = rows[0] if rows else []
+    col_letters = [chr(ord('A') + i) for i in range(n_cols)]
+    col_labels = []
+    for i, letter in enumerate(col_letters):
+        header_text = first_row[i] if i < len(first_row) else ''
+        if header_text and len(header_text) <= 20:
+            col_labels.append(f'{letter}: {header_text}')
+        else:
+            col_labels.append(letter)
+
+    return render_template('import_excel_mapping.html',
+                           filename=filename,
+                           total_rows=len(rows),
+                           preview_rows=preview_rows,
+                           n_cols=n_cols,
+                           col_labels=col_labels,
+                           guess=guess)
+
+
+@app.route('/import/excel_apply', methods=['POST'])
+def import_excel_apply():
+    data = request.get_json(silent=True) or {}
+    english_col = data.get('english_col', -1)
+    chinese_col = data.get('chinese_col', -1)
+    phonetic_col = data.get('phonetic_col', -1)
+    pos_col = data.get('pos_col', -1)
+    skip_first_row = bool(data.get('skip_first_row', True))
+
+    try:
+        english_col = int(english_col)
+        chinese_col = int(chinese_col)
+        phonetic_col = int(phonetic_col)
+        pos_col = int(pos_col)
+    except (TypeError, ValueError):
+        return jsonify({'error': '列参数格式错误'}), 400
+
+    if english_col < 0 or chinese_col < 0:
+        return jsonify({'error': '请指定英文列和中文列'}), 400
+    if english_col == chinese_col:
+        return jsonify({'error': '英文列和中文列不能相同'}), 400
+
+    token = session.get('excel_raw_token', '')
+    raw = _load_excel_raw(token)
+    rows = raw.get('rows', [])
+    if not rows:
+        return jsonify({'error': '会话已过期，请重新上传'}), 400
+
+    try:
+        entries = apply_mapping(
+            rows,
+            english_col=english_col,
+            chinese_col=chinese_col,
+            phonetic_col=phonetic_col,
+            pos_col=pos_col,
+            skip_first_row=skip_first_row,
+        )
+    except Exception as e:
+        return jsonify({'error': f'数据转换失败：{e}'}), 400
+
+    if not entries:
+        return jsonify({'error': '映射后无有效数据'}), 400
+
+    # 词库间隔离：新建词库导入，无需检查其他词库的重复词
+    # 只在 entries 内部自查重（同一文件内的重复词标为 duplicate）
+    seen_in_file = set()
     for entry in entries:
-        entry['duplicate'] = (not entry['failed'] and entry['english'].lower() in existing)
+        if entry['failed']:
+            entry['duplicate'] = False
+            continue
+        key = entry['english'].lower()
+        if key in seen_in_file:
+            entry['duplicate'] = True
+        else:
+            seen_in_file.add(key)
+            entry['duplicate'] = False
 
-    # 保存到服务器端临时文件（避免 cookie 超限）
-    token = _save_parse_result(entries)
-    session['import_token'] = token
-    session['import_filename'] = f.filename
+    preview_token = _save_parse_result(entries)
+    session['import_token'] = preview_token
+    # 清理 excel raw token
+    _delete_excel_raw(session.pop('excel_raw_token', None))
 
-    return jsonify({'entries': entries, 'count': len(entries)})
+    return jsonify({
+        'ok': True,
+        'count': len(entries),
+        'next': '/import/preview',
+    })
 
 
 @app.route('/import/preview')
@@ -325,6 +592,7 @@ def import_confirm():
     db.close()
 
     session['list_id'] = new_list_id
+    session['list_picked'] = True
     _delete_parse_result(session.pop('import_token', None))
     session.pop('import_filename', None)
 
@@ -341,7 +609,14 @@ def learn_setup():
     if not list_id:
         return redirect(url_for('index'))
     stats = get_list_stats(list_id)
-    return render_template('learn_setup.html', stats=stats, default_n=20)
+
+    db = get_db()
+    list_count = db.execute('SELECT COUNT(*) FROM word_lists').fetchone()[0]
+    db.close()
+    show_picker = (list_count >= 2) and (not session.get('list_picked'))
+
+    return render_template('learn_setup.html', stats=stats, default_n=20,
+                           show_picker=show_picker)
 
 
 @app.route('/learn/start', methods=['POST'])
@@ -517,11 +792,19 @@ def quiz_question():
         return redirect(url_for('quiz_submit'))
 
     q = questions[idx]
+    mode = session.get('quiz_mode', 'learn')
+    # 学习模式始终为文字；测试模式取 question_type
+    if mode == 'learn':
+        question_type = 'text'
+    else:
+        question_type = quiz_data.get('question_type', 'text')
+
     return render_template('quiz.html',
                            question=q,
                            current=idx + 1,
                            total=len(questions),
-                           mode=session.get('quiz_mode', 'learn'))
+                           mode=mode,
+                           question_type=question_type)
 
 
 @app.route('/quiz/answer', methods=['POST'])
@@ -627,10 +910,14 @@ def quiz_submit():
 
     else:  # test mode
         list_id = get_current_list_id()
+        # 区分文字测试 / 听力测试
+        test_type = session.get('quiz_test_type', 'text')
+        log_mode = 'test_audio' if test_type == 'audio' else 'test_text'
+
         db = get_db()
         db.execute(
             'INSERT INTO study_log (list_id, date, mode, word_ids, accuracy) VALUES (?,?,?,?,?)',
-            (list_id, str(date.today()), 'test', json.dumps(word_ids), accuracy)
+            (list_id, str(date.today()), log_mode, json.dumps(word_ids), accuracy)
         )
         db.commit()
         db.close()
@@ -639,6 +926,7 @@ def quiz_submit():
         test_count = session.get('test_count', total)
 
         session.pop('quiz_answers', None)
+        session.pop('quiz_test_type', None)
 
         return render_template('test_result.html',
                                correct=correct_count,
@@ -646,7 +934,8 @@ def quiz_submit():
                                accuracy=int(accuracy * 100),
                                score_label=score_label,
                                wrong_items=wrong_items,
-                               test_count=test_count)
+                               test_count=test_count,
+                               test_type=test_type)
 
 
 @app.route('/quiz/retry', methods=['POST'])
@@ -683,7 +972,14 @@ def test_setup():
     if not list_id:
         return redirect(url_for('index'))
     stats = get_list_stats(list_id)
-    return render_template('test_setup.html', stats=stats, default_m=10)
+
+    db = get_db()
+    list_count = db.execute('SELECT COUNT(*) FROM word_lists').fetchone()[0]
+    db.close()
+    show_picker = (list_count >= 2) and (not session.get('list_picked'))
+
+    return render_template('test_setup.html', stats=stats, default_m=10,
+                           show_picker=show_picker)
 
 
 @app.route('/test/start', methods=['POST'])
@@ -692,6 +988,9 @@ def test_start():
     if not list_id:
         return redirect(url_for('index'))
     m = request.form.get('m', 10, type=int)
+    test_type = request.form.get('test_type', 'text')
+    if test_type not in ('text', 'audio'):
+        test_type = 'text'
 
     db = get_db()
     total_count = db.execute('SELECT COUNT(*) FROM words WHERE list_id=?', (list_id,)).fetchone()[0]
@@ -714,11 +1013,16 @@ def test_start():
 
     random.shuffle(questions)
     # 存到服务端文件，避免 cookie 超限
-    token = _save_quiz_data({'questions': questions, 'word_ids': word_ids})
+    token = _save_quiz_data({
+        'questions': questions,
+        'word_ids': word_ids,
+        'question_type': test_type,
+    })
     session['quiz_token'] = token
     session['quiz_index'] = 0
     session['quiz_answers'] = {}
     session['quiz_mode'] = 'test'
+    session['quiz_test_type'] = test_type
     session['test_count'] = m
 
     return redirect(url_for('quiz_question'))

@@ -10,6 +10,7 @@
   <nav class="nav">
     <div class="nav__inner">
       <a href="{{ url_for('index') }}" class="nav__brand">单词记忆</a>
+      {% include '_list_switcher.html' %}
       <div class="nav__links">
         <a href="{{ url_for('index') }}" class="nav__link {% if request.endpoint == 'index' %}nav__link--active{% endif %}">首页</a>
         <a href="{{ url_for('library') }}" class="nav__link {% if request.endpoint == 'library' %}nav__link--active{% endif %}">词库管理</a>
@@ -22,6 +23,7 @@
     {% block content %}{% endblock %}
   </main>
 
+  <script src="{{ url_for('static', filename='tts.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

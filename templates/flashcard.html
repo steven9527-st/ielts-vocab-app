@@ -16,9 +16,23 @@
   <div class="flashcard" id="card" tabindex="0">
     <div class="flashcard__inner">
       <div class="flashcard__front">
-        <div class="flashcard__word">{{ word.english | lower }}</div>
+        <div class="flashcard__word">
+          {{ word.english | lower }}
+          {% if not word.phonetic %}
+          <button type="button" class="btn-tts" id="ttsBtn"
+                  data-text="{{ word.english }}"
+                  title="点击朗读"
+                  aria-label="朗读单词">🔊</button>
+          {% endif %}
+        </div>
         {% if word.phonetic %}
-        <div class="flashcard__phonetic flashcard__phonetic--front">{{ word.phonetic }}</div>
+        <div class="flashcard__phonetic flashcard__phonetic--front">
+          {{ word.phonetic }}
+          <button type="button" class="btn-tts" id="ttsBtn"
+                  data-text="{{ word.english }}"
+                  title="点击朗读"
+                  aria-label="朗读单词">🔊</button>
+        </div>
         {% endif %}
         <div class="flashcard__hint">点击查看释义</div>
       </div>
@@ -50,14 +64,22 @@
 <script>
 const card = document.getElementById('card');
 const nextWrap = document.getElementById('nextWrap');
-let flipped = false;
+const hintEl = card.querySelector('.flashcard__hint');
+let isBack = false;       // 当前是否在背面
+let everFlipped = false;  // 是否曾经翻到过背面（用于决定要不要显示"下一张"）
 
 function flip() {
-  if (!flipped) {
-    flipped = true;
-    card.classList.add('flipped');
+  isBack = !isBack;
+  card.classList.toggle('flipped', isBack);
+
+  if (!everFlipped && isBack) {
+    everFlipped = true;
     nextWrap.style.display = 'block';
-    card.style.cursor = 'default';
+  }
+
+  // 提示文案随状态切换
+  if (hintEl) {
+    hintEl.textContent = isBack ? '点击返回正面' : '点击查看释义';
   }
 }
 
@@ -65,9 +87,19 @@ card.addEventListener('click', flip);
 
 document.addEventListener('keydown', (e) => {
   if (e.code === 'Space') { e.preventDefault(); flip(); }
-  if (e.code === 'ArrowRight' && flipped) {
+  if (e.code === 'ArrowRight' && everFlipped) {
     nextWrap.querySelector('form').submit();
   }
+});
+
+// 🔊 发音按钮：阻止冒泡，防止触发卡片翻转
+document.querySelectorAll('.btn-tts').forEach(function(btn) {
+  btn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (typeof window.speakWord === 'function') {
+      window.speakWord(btn.dataset.text || '');
+    }
+  });
 });
 </script>
 {% endblock %}

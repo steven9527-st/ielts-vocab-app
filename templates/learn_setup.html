@@ -24,6 +24,10 @@
     </form>
   </div>
 </div>
+
+{% if show_picker %}
+  {% include '_list_picker.html' %}
+{% endif %}
 {% endblock %}
 
 {% block scripts %}

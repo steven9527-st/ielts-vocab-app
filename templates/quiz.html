@@ -15,8 +15,18 @@
     {% endif %}
   </div>
 
-  <!-- 题目 -->
+  <!-- 题目区 -->
+  {% if question_type == 'audio' %}
+  <div style="text-align:center;">
+    <button type="button" class="btn-tts btn-tts--lg" id="audioPlayBtn"
+            data-text="{{ question.english }}"
+            title="点击重新播放发音"
+            aria-label="播放发音">🔊</button>
+    <div class="audio-hint">点击按钮重听 · 选择对应中文释义</div>
+  </div>
+  {% else %}
   <div class="quiz-english">{{ question.english | lower }}</div>
+  {% endif %}
 
   <!-- 选项 -->
   <form method="post" action="{{ url_for('quiz_answer') }}" id="quizForm">
@@ -44,5 +54,27 @@ document.addEventListener('keydown', (e) => {
     if (btns[map[e.code]]) btns[map[e.code]].click();
   }
 });
+
+{% if question_type == 'audio' %}
+// 听力模式：进入自动播放一次 + 按钮可重复
+(function() {
+  var btn = document.getElementById('audioPlayBtn');
+  if (!btn) return;
+  var word = btn.dataset.text || '';
+
+  btn.addEventListener('click', function() {
+    if (typeof window.speakWord === 'function') window.speakWord(word);
+  });
+
+  // 进入页面自动朗读一次
+  function autoPlay() {
+    if (typeof window.speakWord === 'function') {
+      window.speakWord(word);
+    }
+  }
+  // 给浏览器一些时间初始化 speechSynthesis
+  setTimeout(autoPlay, 150);
+})();
+{% endif %}
 </script>
 {% endblock %}
