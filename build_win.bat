@@ -1,64 +1,69 @@
-﻿@echo off
-chcp 65001 >nul
+@echo off
 setlocal EnableDelayedExpansion
 
-echo ════════════════════════════════════════
+echo ========================================
 echo   IELTSVocab Windows Build
-echo ════════════════════════════════════════
+echo ========================================
 echo.
 
 cd /d "%~dp0"
 
-REM 0. 检查 python
+REM 0. check python
 where python >nul 2>nul
 if errorlevel 1 (
-    echo [X] 未检测到 python。请先安装 Python 3.10+ 并勾选 "Add to PATH"
-    echo     下载地址: https://www.python.org/downloads/
+    echo [X] Python not found.
+    echo     Please install Python 3.10+ from https://www.python.org/downloads/
+    echo     IMPORTANT: check "Add python.exe to PATH" during installation.
     pause
     exit /b 1
 )
 
-REM 1. 装依赖
-echo [1/4] 安装/校验依赖...
+REM 1. install dependencies
+echo [1/4] Installing dependencies...
 python -m pip install --quiet -r requirements.txt
+if errorlevel 1 (
+    echo [X] Failed to install requirements.
+    pause
+    exit /b 1
+)
 python -m pip install --quiet pyinstaller pillow
+if errorlevel 1 (
+    echo [X] Failed to install pyinstaller/pillow.
+    pause
+    exit /b 1
+)
 
-REM 2. 清理旧产物
-echo [2/4] 清理旧产物...
+REM 2. clean previous build
+echo [2/4] Cleaning previous build...
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 
-REM 3. 构建
-echo [3/4] PyInstaller 构建中（约 1-2 分钟）...
+REM 3. run PyInstaller
+echo [3/4] Running PyInstaller (1-2 minutes)...
 python -m PyInstaller --noconfirm --clean IELTSVocab_win.spec
-
 if not exist "dist\IELTSVocab\IELTSVocab.exe" (
-    echo [X] 构建失败：dist\IELTSVocab\IELTSVocab.exe 未生成
+    echo [X] Build failed: dist\IELTSVocab\IELTSVocab.exe not found.
     pause
     exit /b 1
 )
 
-REM 4. 打 zip 包（方便分发）
-echo [4/4] 打包 zip...
+REM 4. zip the output folder
+echo [4/4] Creating zip archive...
 cd dist
 powershell -NoProfile -Command "Compress-Archive -Path IELTSVocab -DestinationPath IELTSVocab-win.zip -Force"
 cd ..
 
 echo.
-echo ════════════════════════════════════════
-echo   构建完成 ✓
-echo ════════════════════════════════════════
+echo ========================================
+echo   BUILD COMPLETE
+echo ========================================
 echo.
-echo 产物位置：
-echo   文件夹: dist\IELTSVocab\
-echo   可执行: dist\IELTSVocab\IELTSVocab.exe
-echo   分发包: dist\IELTSVocab-win.zip
+echo Output:
+echo   Folder:  dist\IELTSVocab\
+echo   Exe:     dist\IELTSVocab\IELTSVocab.exe
+echo   Zip:     dist\IELTSVocab-win.zip
 echo.
-echo 测试方式：
-echo   双击 dist\IELTSVocab\IELTSVocab.exe
-echo.
-echo 分发方式：
-echo   把 IELTSVocab-win.zip 发给朋友
-echo   朋友解压后双击 IELTSVocab.exe 即用
+echo Test:    double-click dist\IELTSVocab\IELTSVocab.exe
+echo Share:   send IELTSVocab-win.zip to friends
 echo.
 pause
