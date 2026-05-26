@@ -9,7 +9,7 @@
 | 平台 | 状态 | 产物 |
 |------|------|------|
 | macOS | ✅ 已就绪 | `dist/IELTSVocab.app` + `dist/IELTSVocab.dmg` |
-| Windows | ⏳ TODO | 需在 Windows 机器上跑（脚本待补） |
+| Windows | ✅ 脚本就绪 | `dist/IELTSVocab/IELTSVocab.exe` + `dist/IELTSVocab-win.zip`（需在 Windows 上构建） |
 
 ---
 
@@ -17,15 +17,20 @@
 
 ```
 ielts-vocab-app/
-├── IELTSVocab.spec          # PyInstaller 配置（macOS .app 定义）
-├── build_mac.sh             # 一键构建脚本
+├── IELTSVocab.spec          # PyInstaller 配置（macOS .app）
+├── IELTSVocab_win.spec      # PyInstaller 配置（Windows .exe）
+├── build_mac.sh             # macOS 一键构建脚本
+├── build_win.bat            # Windows 一键构建脚本
 ├── build_assets/
-│   ├── icon.icns            # macOS 应用图标（多分辨率合一）
-│   └── *.png                # 图标源文件
+│   ├── icon.icns            # macOS 应用图标
+│   ├── icon.ico             # Windows 应用图标（多分辨率合一）
+│   └── icon_source.png      # 图标源文件（1024x1024 PNG）
 ├── paths.py                 # 运行环境路径分发（主分支）
 └── dist/                    # 构建产物（.gitignore，本地存在）
-    ├── IELTSVocab.app
-    └── IELTSVocab.dmg
+    ├── IELTSVocab.app       (mac)
+    ├── IELTSVocab.dmg       (mac)
+    ├── IELTSVocab/          (win, 文件夹)
+    └── IELTSVocab-win.zip   (win, 分发用)
 ```
 
 ---
@@ -69,17 +74,45 @@ open dist/IELTSVocab.app
 
 ---
 
-## Windows 构建（TODO）
+## Windows 构建
 
-预期方案：
-- 文件：`IELTSVocab_win.spec` + `build_win.bat`
-- 在 Windows 机器上跑（PyInstaller 不能跨平台编译）
-- 产物：`dist/IELTSVocab.exe`（单文件）或文件夹 + 安装包
+### 前置要求
+- Windows 10/11（或 Windows 虚拟机）
+- Python 3.10+（[python.org](https://www.python.org/downloads/) 下载，安装时**必须勾选 "Add python.exe to PATH"**）
+- 把本仓库 clone 或 zip 下载解压到 Windows
 
-实现细节：
-- `BUNDLE` 段不适用（macOS 专用），改用 `EXE` + `COLLECT`
-- 图标转 `.ico` 格式（`build_assets/icon.ico`）
-- 用 NSIS 或 Inno Setup 做安装包（可选）
+### 一键构建
+在 Windows 上：
+```cmd
+build_win.bat
+```
+
+脚本自动完成：
+1. 检查 Python，缺失给出指引
+2. 装 PyInstaller / Pillow / requirements.txt
+3. 清理 `build\` `dist\`
+4. 用 `IELTSVocab_win.spec` 构建 `dist\IELTSVocab\IELTSVocab.exe`
+5. PowerShell 打 zip → `dist\IELTSVocab-win.zip`
+
+预计耗时：1-2 分钟
+产物大小：解压后约 100MB / zip 约 50MB
+
+### 测试
+```cmd
+dist\IELTSVocab\IELTSVocab.exe
+```
+应自动打开默认浏览器到 `http://127.0.0.1:<auto-port>`。
+首次启动 Windows Defender 可能提示「未识别的应用」→ 「更多信息」→ 「仍要运行」。
+
+### 用户数据位置
+```
+%APPDATA%\IELTSVocab\
+├── vocab.db          # SQLite 主数据库
+└── .tmp_parse\       # 临时解析数据
+```
+例如：`C:\Users\<用户名>\AppData\Roaming\IELTSVocab\`
+
+卸载方式：删除 `IELTSVocab` 文件夹 + 删除上述数据目录。
 
 ---
 
