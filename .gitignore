@@ -10,6 +10,9 @@ vocab.db-wal
 # macOS
 .DS_Store
 
+# 用户私有的测试样本 PDF（项目根的 *.pdf，不入仓库）
+/*.pdf
+
 # PyInstaller 构建产物（每次本地构建生成，不入仓库）
 build/
 dist/
