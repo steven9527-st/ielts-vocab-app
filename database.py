@@ -33,6 +33,7 @@ def init_db():
             chinese     TEXT NOT NULL,
             phonetic    TEXT DEFAULT '',
             pos         TEXT DEFAULT '',
+            synonyms    TEXT DEFAULT '',
             status      TEXT NOT NULL DEFAULT 'unmastered',
             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(list_id, english)
@@ -63,13 +64,17 @@ def init_db():
     """)
 
     conn.commit()
-    # 迁移：为已存在的 words 表添加 phonetic/pos 列
+    # 迁移：为已存在的 words 表添加 phonetic/pos/synonyms 列
     try:
         c.execute("ALTER TABLE words ADD COLUMN phonetic TEXT DEFAULT ''")
     except Exception:
         pass  # 列已存在则忽略
     try:
         c.execute("ALTER TABLE words ADD COLUMN pos TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE words ADD COLUMN synonyms TEXT DEFAULT ''")
     except Exception:
         pass
     conn.commit()

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}同义词学习{% endblock %}
+
+{% block content %}
+<div class="container" style="padding-top:80px; padding-bottom:60px; max-width:480px;">
+  <div class="page-title">同义词学习</div>
+  <div class="page-subtitle">
+    词库中带同义词的单词：<strong>{{ stats.with_synonyms }}</strong> 个
+  </div>
+
+  <div class="card">
+    {% if stats.with_synonyms == 0 %}
+      <div style="text-align:center; padding:32px 0;">
+        <div style="font-size:14px; color:var(--clr-text-secondary); line-height:1.8;">
+          当前词库还没有带同义词的单词。<br>
+          请在导入词库时勾选同义词列，或在词库管理页手动补充同义词。
+        </div>
+        <div class="action-row" style="justify-content:center; margin-top:24px;">
+          <a href="{{ url_for('index') }}" class="btn btn--ghost">返回</a>
+          <a href="{{ url_for('library') }}" class="btn btn--primary">前往词库管理</a>
+        </div>
+      </div>
+    {% else %}
+      <form method="post" action="{{ url_for('synonym_start') }}" id="setupForm">
+        <div style="text-align:center; margin-bottom:var(--space-8);">
+          <label style="font-size:14px; font-weight:500; display:block; margin-bottom:16px; color:var(--clr-text-secondary);">
+            本次学习单词数
+          </label>
+          <input type="number" name="n" id="nInput" class="input input--number"
+                 value="{{ default_n }}" min="1" max="{{ stats.with_synonyms }}" required>
+          <div id="hint" style="font-size:12px; color:var(--clr-text-muted); margin-top:8px;">
+            正面英文 → 翻面看同义词
+          </div>
+        </div>
+
+        <div class="action-row" style="justify-content:center;">
+          <a href="{{ url_for('index') }}" class="btn btn--ghost">取消</a>
+          <button type="submit" class="btn btn--primary btn--lg" id="startBtn">开始学习</button>
+        </div>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if show_picker %}
+  {% include '_list_picker.html' %}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const max = {{ stats.with_synonyms }};
+const input = document.getElementById('nInput');
+const hint = document.getElementById('hint');
+const btn = document.getElementById('startBtn');
+
+if (input) {
+  function validate() {
+    const v = parseInt(input.value) || 0;
+    if (v > max) {
+      hint.textContent = `带同义词的单词仅 ${max} 个`;
+      input.value = max;
+    } else if (v < 1) {
+      hint.textContent = '至少选择 1 个单词';
+      btn.disabled = true;
+      return;
+    } else {
+      hint.textContent = '正面英文 → 翻面看同义词';
+    }
+    btn.disabled = false;
+  }
+  input.addEventListener('input', validate);
+  validate();
+}
+</script>
+{% endblock %}

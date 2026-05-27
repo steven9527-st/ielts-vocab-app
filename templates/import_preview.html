@@ -29,6 +29,7 @@
           <th style="width:100px;">音标</th>
           <th style="width:60px;">词性</th>
           <th>中文释义</th>
+          <th style="width:160px;">同义词</th>
           <th style="width:80px;">状态</th>
           <th style="width:60px;"></th>
         </tr>
@@ -79,6 +80,15 @@
             {% endif %}
             {% if entry.failed %}
               <span class="badge badge--pink" style="margin-left:8px;">解析失败 · 可手动填写</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if entry.failed %}
+            <input type="text" class="input cell-synonyms-edit" value=""
+                   placeholder="-" style="width:100%; min-width:120px; font-size:13px;">
+            {% else %}
+            <span class="cell-synonyms" contenteditable="{{ 'false' if entry.duplicate else 'true' }}"
+                  style="display:inline-block; min-width:120px; outline:none; color:var(--clr-gray-600); font-size:13px;">{{ entry.synonyms or '' }}</span>
             {% endif %}
           </td>
           <td>
@@ -141,12 +151,14 @@ document.getElementById('confirmBtn').addEventListener('click', async () => {
     const zhInput = r.querySelector('.cell-chinese-edit');
     const phInput = r.querySelector('.cell-phonetic-edit');
     const posInput = r.querySelector('.cell-pos-edit');
+    const synInput = r.querySelector('.cell-synonyms-edit');
     const english = enInput ? enInput.value.trim() : (r.querySelector('.cell-english')?.textContent.trim() || '');
     const chinese = zhInput ? zhInput.value.trim() : (r.querySelector('.cell-chinese')?.textContent.trim() || '');
     const phonetic = phInput ? phInput.value.trim() : (r.querySelector('.cell-phonetic')?.textContent.trim() || '');
     const pos = posInput ? posInput.value.trim() : (r.querySelector('.cell-pos')?.textContent.trim() || '');
+    const synonyms = synInput ? synInput.value.trim() : (r.querySelector('.cell-synonyms')?.textContent.trim() || '');
     if (english && chinese) {
-      entries.push({ english, chinese, phonetic, pos });
+      entries.push({ english, chinese, phonetic, pos, synonyms });
     }
   });
 

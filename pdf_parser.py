@@ -1,5 +1,102 @@
 import re
+from collections import Counter
+
 import pdfplumber
+
+
+# ─────────────────────────────────────────
+# 表格 PDF 支持（add-pdf-table-import）
+# ─────────────────────────────────────────
+
+def has_text_layer(filepath: str) -> bool:
+    """检测 PDF 是否含可提取的文字层。
+
+    扫描图 PDF 没有矢量文字，pdfplumber 提取的 chars 总数会非常少（通常为 0）。
+    返回 False 时调用方应直接拒绝并引导用户预处理为文字层 PDF。
+    """
+    try:
+        with pdfplumber.open(filepath) as pdf:
+            total = 0
+            for page in pdf.pages:
+                total += len(page.chars)
+                # 早停：发现已有文字层就不必继续
+                if total >= 10:
+                    return True
+        return False
+    except Exception:
+        # 文件损坏等情况由上层 `parse_pdf` / `extract_pdf_tables` 重新打开时报错
+        return False
+
+
+def _clean_table_rows(raw_rows: list[list]) -> list[list[str]]:
+    """对 pdfplumber 抽出的原始行做清洗：
+    1) 单 cell 行（标题，如 "C4 Test 1"）→ 剔除
+    2) 列数与最常见列数不一致 → 剔除
+    3) 单元格 None → '', 两端 strip
+    """
+    if not raw_rows:
+        return []
+
+    # 归一化：None → ''
+    norm: list[list[str]] = []
+    for r in raw_rows:
+        cells = [(c if c is not None else '').strip() for c in r]
+        # 整行全空跳过
+        if not any(cells):
+            continue
+        # 单 cell 标题行：仅一个非空 cell 且其它为空（或长度=1）
+        non_empty = [c for c in cells if c]
+        if len(non_empty) <= 1:
+            continue
+        norm.append(cells)
+
+    if not norm:
+        return []
+
+    # 选出"最常见列数"作为基准
+    width_counter = Counter(len(r) for r in norm)
+    target_width, _ = width_counter.most_common(1)[0]
+
+    aligned = [r for r in norm if len(r) == target_width]
+    return aligned
+
+
+def extract_pdf_tables(filepath: str) -> list[list[str]] | None:
+    """尝试从 PDF 中抽取表格数据。
+
+    工作流程：
+      • 遍历每一页调用 `page.extract_tables()`
+      • 把所有页所有表格的所有行 flatten 到一个列表
+      • 用 `_clean_table_rows` 清洗（剔除标题/对齐列数）
+
+    返回：
+      list[list[str]]   — 至少抽到 ≥2 行 ≥2 列的有效表格时返回合并后的 rows
+      None              — 没抽到任何有效表格（用于触发上层降级到 _ENTRY_RE 路径）
+    """
+    try:
+        with pdfplumber.open(filepath) as pdf:
+            all_rows: list[list] = []
+            for page in pdf.pages:
+                try:
+                    tables = page.extract_tables() or []
+                except Exception:
+                    # 单页表格抽取失败不影响其他页
+                    continue
+                for tbl in tables:
+                    if tbl:
+                        all_rows.extend(tbl)
+    except Exception:
+        return None
+
+    cleaned = _clean_table_rows(all_rows)
+
+    # 有效性门槛：至少 2 行 2 列
+    if len(cleaned) < 2:
+        return None
+    if len(cleaned[0]) < 2:
+        return None
+
+    return cleaned
 
 
 # 宽松正则：序号. 单词/词组 [英音标] 词性 剩余内容
@@ -86,6 +183,39 @@ _PURE_POS_RE = re.compile(
 _PURE_PHON_RE = re.compile(
     r'^[a-zA-Zəˈˌːɪʊɛɔæɒɑʌəʃʒθðŋ\s\'(),;.\-]+\]?\s*$'
 )
+
+
+# 同义词提取：从释义/续行文本中识别 "同义词:/同义:/近义:/syn:/syn./synonym:" 等标记
+# 例: "n. 朋友 同义: friend, mate" → 同义词 = "friend, mate"
+# 例: "vt. 减少 syn. reduce; lessen" → 同义词 = "reduce; lessen"
+_SYNONYM_LABEL_RE = re.compile(
+    r'(?:同\s*义\s*词?|近\s*义\s*词?|syn(?:onym)?s?)'
+    r'\s*[:：.]\s*'
+    r'(.+?)$',
+    re.IGNORECASE
+)
+
+
+def _extract_synonyms_from_text(text: str) -> tuple[str, str]:
+    """从释义文本中切出同义词部分。
+
+    返回 (cleaned_text, synonyms)：
+        cleaned_text: 移除同义词段落后的释义文本
+        synonyms: 提取出的同义词字符串（多个用 ", " 分隔，未识别时为 ''）
+    """
+    if not text:
+        return text, ''
+    m = _SYNONYM_LABEL_RE.search(text)
+    if not m:
+        return text, ''
+    raw = m.group(1).strip()
+    # 切出同义词后，释义文本去尾
+    cleaned = text[:m.start()].rstrip(' ;,；，')
+    # 标准化分隔符：将 "/" "、" ";" "；" "," "，" 都归一为 ", "
+    parts = re.split(r'[\/、；;,，\s]+', raw)
+    parts = [p.strip() for p in parts if p.strip()]
+    synonyms = ', '.join(parts)
+    return cleaned, synonyms
 
 
 def _fix_line_breaks(line: str) -> str:
@@ -458,6 +588,7 @@ def parse_pdf(filepath: str) -> list[dict]:
         'chinese': str,    # 模型 C 格式: "n. xxx | vt. yyy"
         'phonetic': str,
         'pos': str,        # "n.; vt."
+        'synonyms': str,   # 同义词（若释义文本含 "同义:/syn:" 标记则提取，否则为空）
         'failed': bool
     }
     """
@@ -549,11 +680,15 @@ def parse_pdf(filepath: str) -> list[dict]:
                         # 序列化输出
                         pos, chinese = _serialize_meanings(meanings)
 
+                        # 同义词提取：从最终 chinese 文本中扫描标签
+                        chinese, synonyms = _extract_synonyms_from_text(chinese)
+
                         results.append({
                             'english': english,
                             'chinese': chinese,
                             'phonetic': phonetic,
                             'pos': pos,
+                            'synonyms': synonyms,
                             'failed': False
                         })
                     else:
@@ -567,6 +702,7 @@ def parse_pdf(filepath: str) -> list[dict]:
                             'chinese': '',
                             'phonetic': '',
                             'pos': '',
+                            'synonyms': '',
                             'failed': True,
                             'raw': line[:120]
                         })

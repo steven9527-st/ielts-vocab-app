@@ -23,13 +23,15 @@ except ImportError:
 
 # ── 列名识别字典（小写匹配） ──────────────────────────────
 ENGLISH_HEADERS = {'word', 'words', 'english', 'vocabulary', 'vocab',
-                   '单词', '英文', '英语', '词汇'}
+                   '单词', '英文', '英语', '词汇', '文章'}
 CHINESE_HEADERS = {'meaning', 'meanings', 'chinese', 'translation', 'definition',
-                   'definitions', '释义', '中文', '解释', '意思', '翻译'}
+                   'definitions', '释义', '中文', '解释', '意思', '翻译', '题目'}
 PHONETIC_HEADERS = {'phonetic', 'phonetics', 'pronunciation', 'ipa',
                     '音标', '发音', '英标', '美标'}
 POS_HEADERS = {'pos', 'part of speech', 'partofspeech',
                '词性', '词类'}
+SYNONYM_HEADERS = {'synonym', 'synonyms', 'syn', 'syns', 'similar',
+                   '同义词', '近义词', '同义', '近义'}
 
 # CSV 编码降级序列
 _CSV_ENCODINGS = ['utf-8-sig', 'utf-8', 'gbk']
@@ -149,7 +151,7 @@ def looks_like_header(first_row: list[str]) -> bool:
 
     规则：
     1. 第一行所有单元格都不含中文字符
-    2. 且至少一个单元格匹配已知表头词（英文/中文/音标/词性同义词集）
+    2. 且至少一个单元格匹配已知表头词（英文/中文/音标/词性/同义词同义词集）
     3. 单元格内容普遍较短（避免误把整段释义当表头）
     """
     if not first_row:
@@ -160,11 +162,11 @@ def looks_like_header(first_row: list[str]) -> bool:
 
     # 含中文 → 大概率不是表头
     if any(_CHINESE_CHAR_RE.search(c) for c in cells if _norm_header(c) not in
-           (CHINESE_HEADERS | PHONETIC_HEADERS | POS_HEADERS | ENGLISH_HEADERS)):
+           (CHINESE_HEADERS | PHONETIC_HEADERS | POS_HEADERS | ENGLISH_HEADERS | SYNONYM_HEADERS)):
         return False
 
     # 至少一个单元格匹配已知表头词
-    known = ENGLISH_HEADERS | CHINESE_HEADERS | PHONETIC_HEADERS | POS_HEADERS
+    known = ENGLISH_HEADERS | CHINESE_HEADERS | PHONETIC_HEADERS | POS_HEADERS | SYNONYM_HEADERS
     if not any(_norm_header(c) in known for c in cells):
         return False
 
@@ -176,7 +178,7 @@ def looks_like_header(first_row: list[str]) -> bool:
 
 
 def guess_columns(rows: list[list[str]]) -> dict:
-    """智能预选英文/中文/音标/词性列。
+    """智能预选英文/中文/音标/词性/同义词列。
 
     返回 dict：
         {
@@ -184,9 +186,13 @@ def guess_columns(rows: list[list[str]]) -> dict:
             'chinese_col': int,
             'phonetic_col': int,
             'pos_col': int,
+            'synonym_col': int,
             'skip_first_row': bool,
-            'phonetic_label': str,    # 自动识别到的列名（可选用于 UI 提示）
+            'phonetic_label': str,
             'pos_label': str,
+            'synonym_label': str,
+            'suggested_mode': str,    # 'standard' | 'synonym'
+                                      # 释义列中文占比 < 10% 时为 'synonym'
         }
     """
     result = {
@@ -194,9 +200,12 @@ def guess_columns(rows: list[list[str]]) -> dict:
         'chinese_col': -1,
         'phonetic_col': -1,
         'pos_col': -1,
+        'synonym_col': -1,
         'skip_first_row': False,
         'phonetic_label': '',
         'pos_label': '',
+        'synonym_label': '',
+        'suggested_mode': 'standard',
     }
     if not rows:
         return result
@@ -220,6 +229,9 @@ def guess_columns(rows: list[list[str]]) -> dict:
             elif key in POS_HEADERS and result['pos_col'] == -1:
                 result['pos_col'] = ci
                 result['pos_label'] = cell
+            elif key in SYNONYM_HEADERS and result['synonym_col'] == -1:
+                result['synonym_col'] = ci
+                result['synonym_label'] = cell
 
     # ── Step 2: 按内容预选剩余的英文/中文列 ──
     data_rows = rows[1:] if is_header else rows
@@ -244,23 +256,41 @@ def guess_columns(rows: list[list[str]]) -> dict:
     if result['english_col'] == -1:
         best_ci, best_score = -1, -1.0
         for ci in range(n_cols):
-            if ci in (result['chinese_col'], result['phonetic_col'], result['pos_col']):
+            if ci in (result['chinese_col'], result['phonetic_col'], result['pos_col'], result['synonym_col']):
                 continue
             if col_ascii_score[ci] > best_score and col_ascii_score[ci] > 0.5:
                 best_score = col_ascii_score[ci]
                 best_ci = ci
         result['english_col'] = best_ci
 
-    # 中文列：选中文比例最高且未被占用的列
+    # 中文列：优先选中文比例最高的列；若全部列中文占比都低，则退化为
+    # "选 ASCII 占比最高的剩余列"作为释义列（兼容英文-英文同义词词库）
     if result['chinese_col'] == -1:
         best_ci, best_score = -1, -1.0
         for ci in range(n_cols):
-            if ci in (result['english_col'], result['phonetic_col'], result['pos_col']):
+            if ci in (result['english_col'], result['phonetic_col'], result['pos_col'], result['synonym_col']):
                 continue
             if col_chinese_ratio[ci] > best_score and col_chinese_ratio[ci] > 0.2:
                 best_score = col_chinese_ratio[ci]
                 best_ci = ci
+        if best_ci == -1:
+            # 退化策略：所有列中文占比都 < 0.2 时，挑剩余列里 ASCII 占比最高的
+            fallback_ci, fallback_score = -1, -1.0
+            for ci in range(n_cols):
+                if ci in (result['english_col'], result['phonetic_col'], result['pos_col'], result['synonym_col']):
+                    continue
+                if col_ascii_score[ci] > fallback_score and col_ascii_score[ci] > 0.5:
+                    fallback_score = col_ascii_score[ci]
+                    fallback_ci = ci
+            best_ci = fallback_ci
         result['chinese_col'] = best_ci
+
+    # 推断导入模式：释义列（chinese_col）的中文占比 < 10% 时推荐同义词模式
+    if result['chinese_col'] >= 0:
+        cn_ratio = col_chinese_ratio[result['chinese_col']] if result['chinese_col'] < len(col_chinese_ratio) else 0.0
+        result['suggested_mode'] = 'synonym' if cn_ratio < 0.1 else 'standard'
+    else:
+        result['suggested_mode'] = 'standard'
 
     return result
 
@@ -275,11 +305,21 @@ def apply_mapping(
     chinese_col: int,
     phonetic_col: int = -1,
     pos_col: int = -1,
+    synonym_col: int = -1,
     skip_first_row: bool = True,
+    import_mode: str = 'standard',
 ) -> list[dict]:
-    """根据用户映射，将原始行转换为标准 entries"""
+    """根据用户映射，将原始行转换为标准 entries
+
+    import_mode:
+      'standard' — B 列只写入 chinese 字段（默认行为）
+      'synonym'  — B 列同时写入 chinese 和 synonyms 字段（同义词词库专用）
+                   显式 synonym_col 优先于 import_mode 推断的同义词。
+    """
     if english_col < 0 or chinese_col < 0:
         raise RuntimeError('必须指定英文列和中文列')
+    if import_mode not in ('standard', 'synonym'):
+        raise RuntimeError(f'不支持的导入模式：{import_mode}')
 
     data = rows[1:] if skip_first_row else rows
     entries: list[dict] = []
@@ -294,9 +334,14 @@ def apply_mapping(
         chinese = _get(row, chinese_col)
         phonetic = _get(row, phonetic_col)
         pos = _get(row, pos_col)
+        synonyms = _get(row, synonym_col)
+
+        # 同义词模式：若没有显式同义词列，则把 chinese 复制到 synonyms
+        if import_mode == 'synonym' and not synonyms:
+            synonyms = chinese
 
         # 整行空白 → 跳过（不计入 entries）
-        if not english and not chinese and not phonetic and not pos:
+        if not english and not chinese and not phonetic and not pos and not synonyms:
             continue
 
         failed = (not english) or (not chinese)
@@ -305,6 +350,7 @@ def apply_mapping(
             'chinese': chinese,
             'phonetic': phonetic,
             'pos': pos,
+            'synonyms': synonyms,
             'failed': failed,
         })
 

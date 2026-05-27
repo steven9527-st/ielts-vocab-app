@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}同义词翻卡{% endblock %}
+
+{% block content %}
+<div class="flashcard-wrap">
+
+  <!-- 顶部进度 -->
+  <div class="progress-top" style="width:100%; max-width:580px;">
+    <span class="progress-top__count">{{ current }} / {{ total }} · 同义词模式</span>
+    <form method="post" action="{{ url_for('synonym_abandon') }}" onsubmit="return confirm('确定退出同义词学习？')">
+      <button type="submit" class="btn btn--ghost" style="padding:4px 12px; font-size:12px;">退出</button>
+    </form>
+  </div>
+
+  <!-- 翻卡 -->
+  <div class="flashcard" id="card" tabindex="0">
+    <div class="flashcard__inner">
+      <div class="flashcard__front">
+        <div class="flashcard__word">
+          {{ word.english | lower }}
+          {% if not word.phonetic %}
+          <button type="button" class="btn-tts" id="ttsBtn"
+                  data-text="{{ word.english }}"
+                  title="点击朗读"
+                  aria-label="朗读单词">🔊</button>
+          {% endif %}
+        </div>
+        {% if word.phonetic %}
+        <div class="flashcard__phonetic flashcard__phonetic--front">
+          {{ word.phonetic }}
+          <button type="button" class="btn-tts" id="ttsBtn"
+                  data-text="{{ word.english }}"
+                  title="点击朗读"
+                  aria-label="朗读单词">🔊</button>
+        </div>
+        {% endif %}
+        <div class="flashcard__hint">点击查看同义词</div>
+      </div>
+      <div class="flashcard__back">
+        <div class="flashcard__meaning">
+          <div style="font-size:12px; color:var(--clr-text-muted); margin-bottom:12px; letter-spacing:1px;">SYNONYMS</div>
+          {% set syn_list = (word.synonyms or '').replace('；', ';').replace('，', ',').replace('、', ',').replace('/', ',').split(',') %}
+          {% for s in syn_list %}
+            {% if s.strip() %}
+            <div class="meaning-line" style="font-size:24px; font-weight:500; line-height:1.6;">
+              {{ s.strip() }}
+            </div>
+            {% endif %}
+          {% endfor %}
+
+          {% if word.chinese %}
+          <div style="margin-top:24px; padding-top:16px; border-top:1px solid var(--clr-border);
+                      font-size:13px; color:var(--clr-text-muted); line-height:1.7;">
+            {% for line in (word.chinese or '').split(' | ') %}
+              {% if line.strip() %}<div>{{ line }}</div>{% endif %}
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 下一张按钮（翻转后才显示） -->
+  <div id="nextWrap" style="margin-top:32px; display:none;">
+    <form method="post" action="{{ url_for('synonym_next') }}">
+      <button type="submit" class="btn btn--primary btn--lg">
+        下一张 →
+      </button>
+    </form>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const card = document.getElementById('card');
+const nextWrap = document.getElementById('nextWrap');
+const hintEl = card.querySelector('.flashcard__hint');
+let isBack = false;
+let everFlipped = false;
+
+function flip() {
+  isBack = !isBack;
+  card.classList.toggle('flipped', isBack);
+
+  if (!everFlipped && isBack) {
+    everFlipped = true;
+    nextWrap.style.display = 'block';
+  }
+
+  if (hintEl) {
+    hintEl.textContent = isBack ? '点击返回正面' : '点击查看同义词';
+  }
+}
+
+card.addEventListener('click', flip);
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); flip(); }
+  if (e.code === 'ArrowRight' && everFlipped) {
+    nextWrap.querySelector('form').submit();
+  }
+});
+
+// 🔊 发音按钮
+document.querySelectorAll('.btn-tts').forEach(function(btn) {
+  btn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (typeof window.speakWord === 'function') {
+      window.speakWord(btn.dataset.text || '');
+    }
+  });
+});
+</script>
+{% endblock %}
