@@ -415,7 +415,45 @@ def import_parse():
             if not has_text_layer(tmp_path):
                 return jsonify({'error': SCANNED_PDF_HINT}), 400
 
-            # ── 双路径分发：先尝试表格抽取，失败则降级到编号词表流程 ──
+            # ── 双路径分发（修复版顺序）：先编号词表 _ENTRY_RE，后表格抽取 ──
+            # 原因：_ENTRY_RE 输出结构化字段（english/phonetic/pos/chinese）
+            # 质量天然优于表格抽取（仅按列粗糙切分）；带表格线的编号词表 PDF
+            # 不应被表格路径"截胡"。
+            try:
+                entries = parse_pdf(tmp_path)
+            except Exception as e:
+                return jsonify({'error': f'PDF 解析失败：{e}'}), 400
+
+            total = len(entries)
+            hit = sum(1 for e in entries if not e.get('failed'))
+            hit_rate = (hit / total) if total > 0 else 0.0
+
+            # 命中率 ≥ 30% 且数量 ≥ 5 → 采用编号词表路径
+            if total >= 5 and hit_rate >= 0.3:
+                # 词库间隔离：新建词库导入，无需检查其他词库的重复词
+                # 只在 entries 内部自查重（同一文件内的重复词标为 duplicate）
+                seen_in_file = set()
+                for entry in entries:
+                    if entry['failed']:
+                        entry['duplicate'] = False
+                        continue
+                    key = entry['english'].lower()
+                    if key in seen_in_file:
+                        entry['duplicate'] = True
+                    else:
+                        seen_in_file.add(key)
+                        entry['duplicate'] = False
+
+                token = _save_parse_result(entries)
+                session['import_token'] = token
+                session['import_filename'] = filename
+                return jsonify({
+                    'entries': entries,
+                    'count': len(entries),
+                    'next': '/import/preview',
+                })
+
+            # ── 命中率不足 → 尝试表格抽取 fallback ──
             table_rows = None
             try:
                 table_rows = extract_pdf_tables(tmp_path)
@@ -436,14 +474,8 @@ def import_parse():
                     'next': '/import/excel_mapping',
                 })
 
-            # ── 降级：编号词表 PDF 流程（保持原有行为） ──
-            try:
-                entries = parse_pdf(tmp_path)
-            except Exception as e:
-                return jsonify({'error': f'PDF 解析失败：{e}'}), 400
-
-            # 词库间隔离：新建词库导入，无需检查其他词库的重复词
-            # 只在 entries 内部自查重（同一文件内的重复词标为 duplicate）
+            # ── 两条路径都未能高质量解析 → 返回 parse_pdf 的原始结果 ──
+            # 让用户在预览页看到现状（可能很空），可手动决定
             seen_in_file = set()
             for entry in entries:
                 if entry['failed']:

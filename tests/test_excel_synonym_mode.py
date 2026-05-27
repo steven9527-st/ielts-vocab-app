@@ -65,6 +65,53 @@ class TestGuessColumnsStandard(unittest.TestCase):
                          f'B 列含中文应推荐标准模式, 实际 {g["suggested_mode"]}')
 
 
+class TestGuessColumnsExcludesNumberColumn(unittest.TestCase):
+    """序号列不能被误选为英文列（修复 fix-pdf-import-route-priority）"""
+
+    def test_four_columns_with_index(self):
+        """4 列输入：序号 / 单词 / 音标 / 中文释义
+        典型场景：表格 PDF 抽出来的雅思词表
+        """
+        rows = [
+            ['1.', 'aback', "[e'baek]", 'adv. 大吃一惊'],
+            ['2.', 'abate', "[e'beIt]", 'v. 减轻; 失效'],
+            ['3.', 'abnormal', "[eb'no:m(e)l]", 'adj. 不正常的'],
+            ['4.', 'abolish', "[e'bOlIS]", 'vt. 废除'],
+            ['5.', 'abrupt', "[e'brApt]", 'adj. 突然的'],
+        ]
+        g = guess_columns(rows)
+        # 关键断言：english_col 应是 1（单词列），不是 0（序号列）
+        self.assertEqual(g['english_col'], 1,
+                         f'english_col 应为 1（单词列），不应为 0（序号列）。实际 {g}')
+        # 中文列应是最后一列
+        self.assertEqual(g['chinese_col'], 3, f'chinese_col 应为 3，实际 {g}')
+
+    def test_pure_number_column_excluded(self):
+        """单纯的序号列（"100.", "1000."）不应被选为英文列"""
+        rows = [
+            ['100.', 'combination', 'n. 结合; 联合体'],
+            ['101.', 'auction', 'n. 拍卖'],
+            ['1000.', 'protest', 'n. 抗议'],
+            ['1001.', 'prototype', 'n. 原型'],
+        ]
+        g = guess_columns(rows)
+        self.assertEqual(g['english_col'], 1,
+                         f'english_col 应为单词列 1，不应为序号列 0。实际 {g}')
+
+    def test_fallback_when_no_word_like_column(self):
+        """所有列都不像英文单词时（如全数字）→ 回退到 ASCII 占比规则
+        这是 D2 兜底机制：不破坏极端边界场景
+        """
+        rows = [
+            ['123', '456'],
+            ['789', '012'],
+        ]
+        g = guess_columns(rows)
+        # 不期望特定值，但至少不应该报错或返回 -1（除非中文也没有）
+        # 这里只验证不抛异常
+        self.assertIn('english_col', g)
+
+
 class TestApplyMappingSynonymMode(unittest.TestCase):
     """同义词模式：chinese == synonyms"""
 

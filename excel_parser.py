@@ -127,6 +127,8 @@ def parse_table_raw(filepath: str) -> list[list[str]]:
 
 _CHINESE_CHAR_RE = re.compile(r'[\u4e00-\u9fa5]')
 _ASCII_LETTER_RE = re.compile(r'[a-zA-Z]')
+# 用于识别"像英文单词"的列：至少 2 个连续字母（如 ID、AI、apple、aback）
+_WORD_LIKE_RE = re.compile(r'[a-zA-Z]{2,}')
 
 
 def _ratio_chinese(text: str) -> float:
@@ -139,6 +141,20 @@ def _ratio_chinese(text: str) -> float:
     if total == 0:
         return 0.0
     return chinese / total
+
+
+def _looks_like_word_column(col_cells: list[str]) -> bool:
+    """判断一列是否「主要由英文单词构成」。
+
+    规则：至少 50% 非空 cell 含有 ≥2 字母的连续字母串。
+    用途：排除"全数字+标点"的序号列（如 "1." / "2." / "1000."），
+    避免在 guess_columns 中把序号列误选为英文列。
+    """
+    cells = [c for c in col_cells if c and c.strip()]
+    if not cells:
+        return False
+    word_like = sum(1 for c in cells if _WORD_LIKE_RE.search(c))
+    return word_like / len(cells) >= 0.5
 
 
 def _norm_header(h: str) -> str:
@@ -241,26 +257,40 @@ def guess_columns(rows: list[list[str]]) -> dict:
 
     col_chinese_ratio: list[float] = []
     col_ascii_score: list[float] = []
+    col_word_like: list[bool] = []
     for ci in range(n_cols):
         col_cells = [r[ci] for r in sample if ci < len(r) and r[ci]]
         if not col_cells:
             col_chinese_ratio.append(0.0)
             col_ascii_score.append(0.0)
+            col_word_like.append(False)
             continue
         ratios = [_ratio_chinese(c) for c in col_cells]
         col_chinese_ratio.append(sum(ratios) / len(ratios))
         # ASCII score = 1 - chinese ratio
         col_ascii_score.append(1.0 - col_chinese_ratio[-1])
+        col_word_like.append(_looks_like_word_column(col_cells))
 
-    # 英文列：选 ASCII 得分最高且未被占用的列
+    # 英文列：选 ASCII 得分最高且「像英文单词」的列
+    # 「像英文单词」过滤：避免把"序号列"（如 "1." / "2."）误选为英文列
     if result['english_col'] == -1:
         best_ci, best_score = -1, -1.0
         for ci in range(n_cols):
             if ci in (result['chinese_col'], result['phonetic_col'], result['pos_col'], result['synonym_col']):
                 continue
+            if not col_word_like[ci]:
+                continue
             if col_ascii_score[ci] > best_score and col_ascii_score[ci] > 0.5:
                 best_score = col_ascii_score[ci]
                 best_ci = ci
+        # 兜底：如果所有列都不像英文单词，回退到原有"ASCII 占比最高"规则
+        if best_ci == -1:
+            for ci in range(n_cols):
+                if ci in (result['chinese_col'], result['phonetic_col'], result['pos_col'], result['synonym_col']):
+                    continue
+                if col_ascii_score[ci] > best_score and col_ascii_score[ci] > 0.5:
+                    best_score = col_ascii_score[ci]
+                    best_ci = ci
         result['english_col'] = best_ci
 
     # 中文列：优先选中文比例最高的列；若全部列中文占比都低，则退化为
