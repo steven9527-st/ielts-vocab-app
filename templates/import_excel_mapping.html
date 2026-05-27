@@ -49,6 +49,26 @@
       </div>
     </div>
 
+    <!-- 导入模式开关 -->
+    <div style="margin-bottom:var(--space-6); padding:14px 16px; background:var(--clr-gray-50); border-radius:6px; border:1px solid var(--clr-border);">
+      <div style="font-size:13px; font-weight:500; margin-bottom:10px;">
+        导入模式
+        <span style="font-weight:400; color:var(--clr-text-muted); margin-left:6px;">已根据内容自动判断，可手动调整</span>
+      </div>
+      <div style="display:flex; gap:24px; flex-wrap:wrap;">
+        <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="radio" name="importMode" value="standard"
+            {% if guess.suggested_mode != 'synonym' %}checked{% endif %}>
+          <span><strong>标准模式</strong>：B 列是中文释义</span>
+        </label>
+        <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="radio" name="importMode" value="synonym"
+            {% if guess.suggested_mode == 'synonym' %}checked{% endif %}>
+          <span><strong>同义词模式</strong>：B 列是英文同义词，导入后可直接用同义词学习</span>
+        </label>
+      </div>
+    </div>
+
     <!-- 自动识别提示 -->
     <div style="margin-bottom:var(--space-4); font-size:13px; line-height:1.8;">
       {% if guess.phonetic_col >= 0 %}
@@ -60,6 +80,11 @@
       <div style="color:#0a7a40;">✓ 自动识别到词性列：<strong>{{ guess.pos_label or col_labels[guess.pos_col] }}</strong></div>
       {% else %}
       <div class="text-muted">· 未识别到词性列（导入后词性字段为空）</div>
+      {% endif %}
+      {% if guess.synonym_col >= 0 %}
+      <div style="color:#0a7a40;">✓ 自动识别到同义词列：<strong>{{ guess.synonym_label or col_labels[guess.synonym_col] }}</strong></div>
+      {% else %}
+      <div class="text-muted">· 未识别到同义词列（同义词学习功能将不可用）</div>
       {% endif %}
     </div>
 
@@ -115,11 +140,13 @@ const status = document.getElementById('applyStatus');
 
 const PHONETIC_COL = {{ guess.phonetic_col }};
 const POS_COL = {{ guess.pos_col }};
+const SYNONYM_COL = {{ guess.synonym_col }};
 
 const COLOR_EN = '#f0f7ff';    // 浅蓝 — 英文列
 const COLOR_ZH = '#fdf2f7';    // 浅粉 — 中文列
 const COLOR_PHON = '#fef9e6';  // 浅黄 — 音标列
 const COLOR_POS = '#f0f9eb';   // 浅绿 — 词性列
+const COLOR_SYN = '#f3eaff';   // 浅紫 — 同义词列
 
 function highlightCol(ci, color) {
   document.querySelectorAll(`#previewTable [data-col="${ci}"]`).forEach(el => {
@@ -132,9 +159,10 @@ function refreshHighlight() {
   document.querySelectorAll('#previewTable [data-col]').forEach(el => {
     el.style.background = '';
   });
-  // 重新应用（顺序：音标/词性先，英中后；后者覆盖前者）
+  // 重新应用（顺序：音标/词性/同义词先，英中后；后者覆盖前者）
   if (PHONETIC_COL >= 0) highlightCol(PHONETIC_COL, COLOR_PHON);
   if (POS_COL >= 0) highlightCol(POS_COL, COLOR_POS);
+  if (SYNONYM_COL >= 0) highlightCol(SYNONYM_COL, COLOR_SYN);
   highlightCol(parseInt(englishSel.value), COLOR_EN);
   highlightCol(parseInt(chineseSel.value), COLOR_ZH);
 }
@@ -152,6 +180,10 @@ continueBtn.addEventListener('click', async () => {
     return;
   }
 
+  // 读取导入模式单选
+  const modeEl = document.querySelector('input[name="importMode"]:checked');
+  const importMode = modeEl ? modeEl.value : 'standard';
+
   continueBtn.disabled = true;
   continueBtn.textContent = '处理中...';
   status.textContent = '';
@@ -165,7 +197,9 @@ continueBtn.addEventListener('click', async () => {
         chinese_col: zh,
         phonetic_col: PHONETIC_COL,
         pos_col: POS_COL,
+        synonym_col: SYNONYM_COL,
         skip_first_row: skipFirstCb.checked,
+        import_mode: importMode,
       })
     });
     const data = await resp.json();

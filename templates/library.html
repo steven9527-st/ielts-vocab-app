@@ -27,13 +27,15 @@
           <th>英文</th>
           <th>音标 / 词性</th>
           <th>中文释义</th>
+          <th>同义词</th>
           <th>状态</th>
           <th style="width:120px;">操作</th>
         </tr>
       </thead>
       <tbody>
         {% for w in words %}
-        <tr data-id="{{ w.id }}" data-english="{{ w.english | lower }}" data-chinese="{{ w.chinese }}">
+        <tr data-id="{{ w.id }}" data-english="{{ w.english | lower }}" data-chinese="{{ w.chinese }}"
+            data-synonyms="{{ w.synonyms or '' }}">
           <td>
             <span class="word-english text-mono" style="font-weight:500;">{{ w.english }}</span>
             {% if w.phonetic or w.pos %}
@@ -51,6 +53,9 @@
                 {% endif %}
               {% endfor %}
             </span>
+          </td>
+          <td>
+            <span class="word-synonyms" style="font-size:13px; color:var(--clr-text-secondary);">{{ w.synonyms or '' }}</span>
           </td>
           <td>
             <button class="badge {% if w.status == 'mastered' %}badge--green{% else %}badge--blue{% endif %} status-btn"
@@ -92,9 +97,13 @@
       <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">词性</label>
       <input type="text" id="editPos" class="input" placeholder="如 v. / adj. / n.">
     </div>
-    <div style="margin-bottom:24px;">
+    <div style="margin-bottom:12px;">
       <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">中文释义</label>
       <textarea id="editChinese" class="input" rows="3" style="resize:vertical;"></textarea>
+    </div>
+    <div style="margin-bottom:24px;">
+      <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">同义词 <span style="color:var(--clr-text-muted); font-weight:400;">（用 , 分隔多个）</span></label>
+      <input type="text" id="editSynonyms" class="input" placeholder="如 reduce, lessen">
     </div>
     <div class="action-row" style="justify-content:flex-end;">
       <button class="btn btn--ghost" onclick="closeModal()">取消</button>
@@ -111,7 +120,8 @@ function filterTable() {
   document.querySelectorAll('#wordsTable tbody tr').forEach(tr => {
     const en = tr.dataset.english || '';
     const zh = (tr.dataset.chinese || '').toLowerCase();
-    tr.style.display = (en.includes(q) || zh.includes(q)) ? '' : 'none';
+    const syn = (tr.dataset.synonyms || '').toLowerCase();
+    tr.style.display = (en.includes(q) || zh.includes(q) || syn.includes(q)) ? '' : 'none';
   });
 }
 
@@ -160,6 +170,7 @@ document.querySelectorAll('.edit-btn').forEach(btn => {
     document.getElementById('editPhonetic').value = tr.querySelector('.word-phonetic')?.textContent.trim() || '';
     document.getElementById('editPos').value = tr.querySelector('.word-pos-badge')?.textContent.trim() || '';
     document.getElementById('editChinese').value = tr.querySelector('.word-chinese').textContent.trim();
+    document.getElementById('editSynonyms').value = tr.dataset.synonyms || '';
     document.getElementById('editModal').style.display = 'flex';
   });
 });
@@ -168,11 +179,12 @@ document.getElementById('saveEditBtn').addEventListener('click', async () => {
   const chinese = document.getElementById('editChinese').value.trim();
   const phonetic = document.getElementById('editPhonetic').value.trim();
   const pos = document.getElementById('editPos').value.trim();
+  const synonyms = document.getElementById('editSynonyms').value.trim();
   if (!english || !chinese) return;
   const resp = await fetch(`/api/word/${editingId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ english, chinese, phonetic, pos })
+    body: JSON.stringify({ english, chinese, phonetic, pos, synonyms })
   });
   if ((await resp.json()).ok) {
     const tr = document.querySelector(`tr[data-id="${editingId}"]`);
@@ -180,6 +192,9 @@ document.getElementById('saveEditBtn').addEventListener('click', async () => {
     tr.dataset.english = english.toLowerCase();
     tr.querySelector('.word-chinese').textContent = chinese;
     tr.dataset.chinese = chinese;
+    tr.dataset.synonyms = synonyms;
+    const synEl = tr.querySelector('.word-synonyms');
+    if (synEl) synEl.textContent = synonyms;
     // 更新音标/词性显示
     let metaEl = tr.querySelector('.word-meta');
     if (!metaEl) {

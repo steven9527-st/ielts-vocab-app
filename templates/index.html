@@ -81,6 +81,11 @@
     {% endif %}
 
     <a href="{{ url_for('test_setup') }}" class="btn btn--ghost">测试模式</a>
+    {% if stats.with_synonyms and stats.with_synonyms > 0 %}
+    <a href="{{ url_for('synonym_setup') }}" class="btn btn--ghost">同义词学习
+      <span style="font-size:11px; color:var(--clr-text-muted); margin-left:4px;">({{ stats.with_synonyms }})</span>
+    </a>
+    {% endif %}
     <a href="{{ url_for('library') }}" class="btn btn--ghost">词库管理</a>
   </div>
 

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}同义词学习完成{% endblock %}
+
+{% block content %}
+<div class="container" style="padding-top:80px; padding-bottom:60px; max-width:480px; text-align:center;">
+  <div style="font-size:48px; margin-bottom:16px;">🎉</div>
+  <div class="page-title">学习完成</div>
+  <div class="page-subtitle">本次共学习 <strong>{{ total }}</strong> 个单词的同义词</div>
+
+  <div class="action-row" style="justify-content:center; margin-top:32px;">
+    <a href="{{ url_for('synonym_setup') }}" class="btn btn--ghost">再来一组</a>
+    <a href="{{ url_for('index') }}" class="btn btn--primary">返回首页</a>
+  </div>
+</div>
+{% endblock %}

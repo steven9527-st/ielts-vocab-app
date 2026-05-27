@@ -11,7 +11,13 @@ from flask import (Flask, jsonify, redirect, render_template, request,
 from database import get_db, init_db
 from excel_parser import (apply_mapping, guess_columns, parse_table_raw)
 from paths import is_frozen, resource_dir, tmp_parse_dir
-from pdf_parser import parse_pdf
+from pdf_parser import parse_pdf, has_text_layer, extract_pdf_tables
+
+# 扫描图 PDF 错误提示文案（用户预处理引导）
+SCANNED_PDF_HINT = (
+    '这个 PDF 看起来是扫描图，无法直接读取文字。'
+    '请先用 WPS / Adobe Acrobat 等工具将其转换为可选中文字的 PDF（或直接导出为 Excel），再上传。'
+)
 
 # 打包环境下，Flask 需要明确指定 templates / static 资源路径（PyInstaller 解压目录）
 if is_frozen():
@@ -176,8 +182,17 @@ def get_list_stats(list_id):
     db = get_db()
     total = db.execute('SELECT COUNT(*) FROM words WHERE list_id=?', (list_id,)).fetchone()[0]
     mastered = db.execute("SELECT COUNT(*) FROM words WHERE list_id=? AND status='mastered'", (list_id,)).fetchone()[0]
+    with_syn = db.execute(
+        "SELECT COUNT(*) FROM words WHERE list_id=? AND synonyms IS NOT NULL AND synonyms!=''",
+        (list_id,)
+    ).fetchone()[0]
     db.close()
-    return {'total': total, 'mastered': mastered, 'unmastered': total - mastered}
+    return {
+        'total': total,
+        'mastered': mastered,
+        'unmastered': total - mastered,
+        'with_synonyms': with_syn,
+    }
 
 
 def calc_streak():
@@ -396,7 +411,32 @@ def import_parse():
 
     try:
         if ext == '.pdf':
-            # ── PDF 流程：直接解析为 entries，跳预览页 ──
+            # ── 文字层探测：扫描图 PDF 直接拒绝 ──
+            if not has_text_layer(tmp_path):
+                return jsonify({'error': SCANNED_PDF_HINT}), 400
+
+            # ── 双路径分发：先尝试表格抽取，失败则降级到编号词表流程 ──
+            table_rows = None
+            try:
+                table_rows = extract_pdf_tables(tmp_path)
+            except Exception:
+                # 表格抽取异常视为"未抽到表格"，静默降级
+                table_rows = None
+
+            if table_rows:
+                # 表格 PDF：写入 excel raw token，跳列映射页（与 .xlsx 完全一致）
+                token = _save_excel_raw({
+                    'rows': table_rows,
+                    'filename': filename,
+                })
+                session['excel_raw_token'] = token
+                session['import_filename'] = filename
+                return jsonify({
+                    'count': len(table_rows),
+                    'next': '/import/excel_mapping',
+                })
+
+            # ── 降级：编号词表 PDF 流程（保持原有行为） ──
             try:
                 entries = parse_pdf(tmp_path)
             except Exception as e:
@@ -491,13 +531,18 @@ def import_excel_apply():
     chinese_col = data.get('chinese_col', -1)
     phonetic_col = data.get('phonetic_col', -1)
     pos_col = data.get('pos_col', -1)
+    synonym_col = data.get('synonym_col', -1)
     skip_first_row = bool(data.get('skip_first_row', True))
+    import_mode = data.get('import_mode', 'standard')
+    if import_mode not in ('standard', 'synonym'):
+        import_mode = 'standard'
 
     try:
         english_col = int(english_col)
         chinese_col = int(chinese_col)
         phonetic_col = int(phonetic_col)
         pos_col = int(pos_col)
+        synonym_col = int(synonym_col)
     except (TypeError, ValueError):
         return jsonify({'error': '列参数格式错误'}), 400
 
@@ -519,7 +564,9 @@ def import_excel_apply():
             chinese_col=chinese_col,
             phonetic_col=phonetic_col,
             pos_col=pos_col,
+            synonym_col=synonym_col,
             skip_first_row=skip_first_row,
+            import_mode=import_mode,
         )
     except Exception as e:
         return jsonify({'error': f'数据转换失败：{e}'}), 400
@@ -586,10 +633,11 @@ def import_confirm():
             continue
         try:
             db.execute(
-                'INSERT OR IGNORE INTO words (list_id, english, chinese, phonetic, pos) VALUES (?, ?, ?, ?, ?)',
+                'INSERT OR IGNORE INTO words (list_id, english, chinese, phonetic, pos, synonyms) VALUES (?, ?, ?, ?, ?, ?)',
                 (new_list_id, english, chinese,
                  entry.get('phonetic', '').strip(),
-                 entry.get('pos', '').strip())
+                 entry.get('pos', '').strip(),
+                 entry.get('synonyms', '').strip())
             )
             count += 1
         except Exception:
@@ -1037,6 +1085,104 @@ def test_start():
 
 
 # ─────────────────────────────────────────
+# 同义词学习（独立翻卡模式：正面英文 / 背面同义词）
+# 仅基于 session 维护一个临时队列，不写 learn_session / study_log
+# ─────────────────────────────────────────
+
+@app.route('/learn/synonym/setup')
+def synonym_setup():
+    list_id = get_current_list_id()
+    if not list_id:
+        return redirect(url_for('index'))
+    stats = get_list_stats(list_id)
+
+    db = get_db()
+    list_count = db.execute('SELECT COUNT(*) FROM word_lists').fetchone()[0]
+    db.close()
+    show_picker = (list_count >= 2) and (not session.get('list_picked'))
+
+    default_n = min(20, stats['with_synonyms']) if stats['with_synonyms'] > 0 else 0
+    return render_template('learn_synonym_setup.html',
+                           stats=stats,
+                           default_n=default_n,
+                           show_picker=show_picker)
+
+
+@app.route('/learn/synonym/start', methods=['POST'])
+def synonym_start():
+    list_id = get_current_list_id()
+    if not list_id:
+        return redirect(url_for('index'))
+    n = request.form.get('n', 20, type=int)
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT id FROM words WHERE list_id=? AND synonyms IS NOT NULL AND synonyms!='' "
+        "ORDER BY RANDOM() LIMIT ?",
+        (list_id, n)
+    ).fetchall()
+    db.close()
+
+    word_ids = [r['id'] for r in rows]
+    if not word_ids:
+        return redirect(url_for('synonym_setup'))
+
+    session['syn_queue'] = word_ids
+    session['syn_total'] = len(word_ids)
+    return redirect(url_for('synonym_card'))
+
+
+@app.route('/learn/synonym/card')
+def synonym_card():
+    queue = session.get('syn_queue') or []
+    if not queue:
+        return redirect(url_for('synonym_done'))
+
+    current_id = queue[0]
+    db = get_db()
+    word = db.execute('SELECT * FROM words WHERE id=?', (current_id,)).fetchone()
+    db.close()
+
+    if not word:
+        # 词被删了，跳过
+        queue.pop(0)
+        session['syn_queue'] = queue
+        return redirect(url_for('synonym_card'))
+
+    total = session.get('syn_total', len(queue))
+    done = total - len(queue)
+    return render_template('flashcard_synonym.html',
+                           word=dict(word),
+                           current=done + 1,
+                           total=total)
+
+
+@app.route('/learn/synonym/next', methods=['POST'])
+def synonym_next():
+    queue = session.get('syn_queue') or []
+    if queue:
+        queue.pop(0)
+        session['syn_queue'] = queue
+    if not queue:
+        return redirect(url_for('synonym_done'))
+    return redirect(url_for('synonym_card'))
+
+
+@app.route('/learn/synonym/abandon', methods=['POST'])
+def synonym_abandon():
+    session.pop('syn_queue', None)
+    session.pop('syn_total', None)
+    return redirect(url_for('index'))
+
+
+@app.route('/learn/synonym/done')
+def synonym_done():
+    total = session.pop('syn_total', 0)
+    session.pop('syn_queue', None)
+    return render_template('flashcard_synonym_done.html', total=total)
+
+
+# ─────────────────────────────────────────
 # 词库管理
 # ─────────────────────────────────────────
 
@@ -1071,6 +1217,8 @@ def update_word(word_id):
         fields['phonetic'] = data['phonetic'].strip()
     if 'pos' in data:
         fields['pos'] = data['pos'].strip()
+    if 'synonyms' in data:
+        fields['synonyms'] = data['synonyms'].strip()
     if 'status' in data and data['status'] in ('mastered', 'unmastered'):
         fields['status'] = data['status']
 
@@ -1176,8 +1324,10 @@ def import_data():
         )
     for w in payload['words']:
         db.execute(
-            'INSERT INTO words (id, list_id, english, chinese, status, created_at) VALUES (?,?,?,?,?,?)',
-            (w['id'], w['list_id'], w['english'], w['chinese'], w.get('status', 'unmastered'), w.get('created_at', ''))
+            'INSERT INTO words (id, list_id, english, chinese, phonetic, pos, synonyms, status, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+            (w['id'], w['list_id'], w['english'], w['chinese'],
+             w.get('phonetic', ''), w.get('pos', ''), w.get('synonyms', ''),
+             w.get('status', 'unmastered'), w.get('created_at', ''))
         )
     for log in payload.get('study_log', []):
         db.execute(
