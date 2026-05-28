@@ -6,7 +6,7 @@
 
   <!-- 顶部进度 -->
   <div class="progress-top">
-    <span class="progress-top__count">{{ current }} / {{ total }}</span>
+    <span class="progress-top__count">{{ display_progress or current }} / {{ total }}</span>
     {% if mode == 'learn' %}
     <form method="post" action="{{ url_for('learn_abandon') }}"
           onsubmit="return confirm('确定放弃今日学习？')">
@@ -33,7 +33,9 @@
     <div class="quiz-options">
       {% set letters = ['A', 'B', 'C', 'D'] %}
       {% for opt in question.options %}
-      <button type="submit" name="answer" value="{{ opt }}" class="quiz-option">
+      <button type="submit" name="answer" value="{{ opt }}"
+              class="quiz-option{% if preselected and opt == preselected %} quiz-option--selected{% endif %}"
+              {% if preselected and opt == preselected %}title="你上次的选择"{% endif %}>
         <span class="quiz-option__letter">{{ letters[loop.index0] }}</span>
         <span>{{ opt }}</span>
       </button>
@@ -41,22 +43,41 @@
     </div>
   </form>
 
+  <!-- 上一题按钮：首题灰显 -->
+  <div class="quiz-nav" style="margin-top:24px; display:flex; justify-content:center;">
+    <form method="post" action="{{ url_for('quiz_prev') }}" id="prevForm">
+      <button type="submit" class="btn btn--ghost" id="prevBtn"
+              {% if not prev_available %}disabled aria-disabled="true"{% endif %}>
+        ← 上一题
+      </button>
+    </form>
+  </div>
+
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-// 键盘快捷键 A/B/C/D
+const prevForm = document.getElementById('prevForm');
+const prevAvailable = {{ 'true' if prev_available else 'false' }};
+const fromPrev = {{ 'true' if from_prev else 'false' }};
+
+// 键盘快捷键 A/B/C/D 选择；← 回上一题
 document.addEventListener('keydown', (e) => {
   const map = { 'KeyA': 0, 'KeyB': 1, 'KeyC': 2, 'KeyD': 3 };
   if (map[e.code] !== undefined) {
     const btns = document.querySelectorAll('.quiz-option');
     if (btns[map[e.code]]) btns[map[e.code]].click();
+    return;
+  }
+  if (e.code === 'ArrowLeft' && prevAvailable) {
+    e.preventDefault();
+    prevForm.submit();
   }
 });
 
 {% if question_type == 'audio' %}
-// 听力模式：进入自动播放一次 + 按钮可重复
+// 听力模式
 (function() {
   var btn = document.getElementById('audioPlayBtn');
   if (!btn) return;
@@ -66,14 +87,16 @@ document.addEventListener('keydown', (e) => {
     if (typeof window.speakWord === 'function') window.speakWord(word);
   });
 
-  // 进入页面自动朗读一次
-  function autoPlay() {
-    if (typeof window.speakWord === 'function') {
-      window.speakWord(word);
+  // 仅首次进入自动朗读；回退（fromPrev=true）不自动播
+  if (!fromPrev) {
+    function autoPlay() {
+      if (typeof window.speakWord === 'function') {
+        window.speakWord(word);
+      }
     }
+    // 给浏览器一些时间初始化 speechSynthesis
+    setTimeout(autoPlay, 150);
   }
-  // 给浏览器一些时间初始化 speechSynthesis
-  setTimeout(autoPlay, 150);
 })();
 {% endif %}
 </script>

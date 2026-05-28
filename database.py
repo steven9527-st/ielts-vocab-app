@@ -56,6 +56,7 @@ def init_db():
             date            DATE NOT NULL,
             word_ids        TEXT NOT NULL,
             remaining_ids   TEXT,
+            current_index   INTEGER,
             quiz_word_ids   TEXT,
             quiz_answers    TEXT,
             status          TEXT NOT NULL DEFAULT 'in_progress',
@@ -77,5 +78,10 @@ def init_db():
         c.execute("ALTER TABLE words ADD COLUMN synonyms TEXT DEFAULT ''")
     except Exception:
         pass
+    # learn_session 新增 current_index：支持「全集 + 游标」模型以实现翻卡前进/后退
+    try:
+        c.execute("ALTER TABLE learn_session ADD COLUMN current_index INTEGER")
+    except Exception:
+        pass  # 列已存在则忽略（幂等）
     conn.commit()
     conn.close()
