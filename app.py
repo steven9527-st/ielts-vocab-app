@@ -1058,35 +1058,58 @@ def learn_abandon():
 
 @app.route('/learn/quiz')
 def learn_quiz():
-    sess_id = session.get('learn_session_id')
-    if not sess_id:
-        return redirect(url_for('index'))
+    # 优先消费同义词学习流传入的测验范围
+    pending_ids = session.get('pending_quiz_word_ids')
+    pending_return = session.get('pending_quiz_return_to')
+    is_synonym_flow = bool(pending_ids) and pending_return == 'synonym_done'
 
     list_id = get_current_list_id()
     if not list_id:
+        # 清理可能的临时数据
+        session.pop('pending_quiz_word_ids', None)
+        session.pop('pending_quiz_return_to', None)
         return redirect(url_for('index'))
-    db = get_db()
-    ls = db.execute('SELECT * FROM learn_session WHERE id=?', (sess_id,)).fetchone()
 
-    if not ls or ls['status'] != 'in_progress':
-        db.close()
-        return redirect(url_for('index'))
+    db = get_db()
+
+    if is_synonym_flow:
+        # 同义词学习流入口：不依赖 learn_session
+        word_ids = list(pending_ids)
+    else:
+        # 普通学习流入口：必须有 learn_session
+        sess_id = session.get('learn_session_id')
+        if not sess_id:
+            db.close()
+            return redirect(url_for('index'))
+
+        ls = db.execute('SELECT * FROM learn_session WHERE id=?', (sess_id,)).fetchone()
+        if not ls or ls['status'] != 'in_progress':
+            db.close()
+            return redirect(url_for('index'))
+
+        # 取本轮需要测验的词（quiz_word_ids 存错题，否则用 word_ids）
+        quiz_ids_raw = ls['quiz_word_ids']
+        word_ids = json.loads(quiz_ids_raw) if quiz_ids_raw else json.loads(ls['word_ids'])
 
     # 检查词库是否够生成干扰项
     total_words = db.execute('SELECT COUNT(*) FROM words WHERE list_id=?', (list_id,)).fetchone()[0]
-    if total_words < 4:
-        db.close()
-        return render_template('quiz_error.html', message='词库单词数不足（至少需要 4 个词）')
-
-    # 取本轮需要测验的词（quiz_word_ids 存错题，否则用 word_ids）
-    quiz_ids_raw = ls['quiz_word_ids']
-    word_ids = json.loads(quiz_ids_raw) if quiz_ids_raw else json.loads(ls['word_ids'])
     db.close()
+    if total_words < 4:
+        # 同义词流：词库太小，直接进完成页
+        if is_synonym_flow:
+            session.pop('pending_quiz_word_ids', None)
+            session.pop('pending_quiz_return_to', None)
+            return redirect(url_for('synonym_done'))
+        return render_template('quiz_error.html', message='词库单词数不足（至少需要 4 个词）')
 
     # 学习测验：按词库 type 决定出题方式（synonym 词库 → 英文同义词选项）
     list_type = _get_list_type(list_id)
     questions = generate_quiz_questions(word_ids, list_id, list_type=list_type)
     if questions is None:
+        if is_synonym_flow:
+            session.pop('pending_quiz_word_ids', None)
+            session.pop('pending_quiz_return_to', None)
+            return redirect(url_for('synonym_done'))
         return render_template('quiz_error.html', message='词库单词数不足（至少需要 4 个词）')
 
     random.shuffle(questions)
@@ -1097,6 +1120,13 @@ def learn_quiz():
     session['quiz_answers'] = {}
     session['quiz_mode'] = 'learn'
     session['quiz_max_reached'] = 1  # 进度峰值：从第 1 题开始
+
+    # 消费一次性来源标记（保留 pending_quiz_return_to 让 submit 识别）
+    session.pop('pending_quiz_word_ids', None)
+    if is_synonym_flow:
+        session['quiz_synonym_flow'] = True
+    else:
+        session.pop('quiz_synonym_flow', None)
 
     return redirect(url_for('quiz_question'))
 
@@ -1201,9 +1231,41 @@ def quiz_submit():
     _delete_quiz_data(session.pop('quiz_token', None))
 
     if mode == 'learn':
+        is_synonym_flow = bool(session.get('quiz_synonym_flow'))
+
         if accuracy == 1.0:
             # 通关处理
             list_id = get_current_list_id()
+
+            if is_synonym_flow:
+                # 同义词学习流：不操作 learn_session，不更新 words.status
+                # learn_synonym 记录已在跳测验前写过，这里补一条 quiz 记录对齐普通流
+                try:
+                    db = get_db()
+                    db.execute(
+                        'INSERT INTO study_log (list_id, date, mode, word_ids, accuracy, duration_s) VALUES (?,?,?,?,?,?)',
+                        (list_id, str(date.today()), 'quiz', json.dumps(word_ids), 1.0, 0)
+                    )
+                    db.commit()
+                    db.close()
+                except Exception as e:
+                    print(f'[quiz_submit synonym_flow] study_log 写入失败: {e}')
+
+                session.pop('quiz_answers', None)
+                session.pop('quiz_max_reached', None)
+                session.pop('quiz_synonym_flow', None)
+                session.pop('pending_quiz_return_to', None)
+
+                return render_template('quiz_result.html',
+                                       mode='learn',
+                                       passed=True,
+                                       correct=total,
+                                       total=total,
+                                       accuracy=100,
+                                       wrong_items=[],
+                                       synonym_flow=True)
+
+            # 普通学习流通关
             sess_id = session.get('learn_session_id')
             start_time = None
 
@@ -1252,7 +1314,8 @@ def quiz_submit():
                                    correct=correct_count,
                                    total=total,
                                    accuracy=int(accuracy * 100),
-                                   wrong_items=wrong_items)
+                                   wrong_items=wrong_items,
+                                   synonym_flow=is_synonym_flow)
 
     else:  # test mode
         list_id = get_current_list_id()
@@ -1390,6 +1453,73 @@ def test_start():
 # 仅基于 session 维护一个临时队列，不写 learn_session / study_log
 # ─────────────────────────────────────────
 
+def _write_synonym_study_log():
+    """把同义词学习记录写入 study_log（mode='learn_synonym'）。
+
+    在"跳测验之前"调用，确保即使用户在测验中途退出，
+    学习行为也已计入 streak / today_completed 统计。
+
+    幂等：如果 session 中 syn_word_ids 已被消费（清空），则跳过写入。
+    """
+    word_ids = session.get('syn_word_ids') or []
+    list_id = session.get('syn_list_id') or get_current_list_id()
+    started_at = session.get('syn_started_at')
+
+    if not word_ids or not list_id:
+        return
+
+    duration = 0
+    if started_at:
+        try:
+            t0 = datetime.fromisoformat(started_at)
+            duration = max(0, int((datetime.now() - t0).total_seconds()))
+        except Exception:
+            duration = 0
+
+    try:
+        db = get_db()
+        db.execute(
+            'INSERT INTO study_log (list_id, date, mode, word_ids, accuracy, duration_s) VALUES (?,?,?,?,?,?)',
+            (list_id, str(date.today()), 'learn_synonym', json.dumps(word_ids), 1.0, duration)
+        )
+        db.commit()
+        db.close()
+        # 标记已写入，避免 synonym_done 重复写
+        session['syn_logged'] = True
+    except Exception as e:
+        print(f'[_write_synonym_study_log] 写入失败: {e}')
+
+
+def _synonym_enter_quiz_or_done():
+    """同义词学完最后一张后的跳转决策：
+    - 词库单词够 4 个 → 写 study_log + 跳测验
+    - 不够 → 直接跳完成页（沿用旧行为，测验流程要求 ≥4 个干扰项词库）
+    """
+    word_ids = session.get('syn_word_ids') or []
+    list_id = session.get('syn_list_id') or get_current_list_id()
+
+    if not word_ids or not list_id:
+        return redirect(url_for('synonym_done'))
+
+    # 检查词库是否够生成干扰项（同义词测验也走 generate_quiz_questions）
+    db = get_db()
+    total_words = db.execute('SELECT COUNT(*) FROM words WHERE list_id=?', (list_id,)).fetchone()[0]
+    db.close()
+
+    if total_words < 4:
+        # 词库太小，直接跳完成页（不测验）
+        return redirect(url_for('synonym_done'))
+
+    # 先记账，再跳测验（用户中途退出也已计入 streak）
+    _write_synonym_study_log()
+
+    # 标记本次测验来源 + 测验范围（learn_quiz 会优先消费）
+    session['pending_quiz_word_ids'] = list(word_ids)
+    session['pending_quiz_return_to'] = 'synonym_done'
+
+    return redirect(url_for('learn_quiz'))
+
+
 @app.route('/learn/synonym/setup')
 def synonym_setup():
     list_id = get_current_list_id()
@@ -1430,6 +1560,7 @@ def synonym_start():
 
     session['syn_queue'] = word_ids
     session['syn_total'] = len(word_ids)
+    session['syn_index'] = 0  # 游标模型：当前在第几个（0-based）
     session['syn_word_ids'] = word_ids  # 原始全集，供 done 时写 study_log
     session['syn_started_at'] = datetime.now().isoformat()  # 开始时间，供 done 时计算 duration
     session['syn_list_id'] = list_id  # 锁定本次学习对应的词库 id（即使中途切库也写对日志）
@@ -1438,37 +1569,99 @@ def synonym_start():
 
 @app.route('/learn/synonym/card')
 def synonym_card():
-    queue = session.get('syn_queue') or []
-    if not queue:
-        return redirect(url_for('synonym_done'))
+    # 优先用游标模型（支持上一张）；旧 session 走 lazy 迁移
+    word_ids = session.get('syn_word_ids') or []
+    if not word_ids:
+        # 旧路径兜底：从 queue 取
+        queue = session.get('syn_queue') or []
+        if not queue:
+            return _synonym_enter_quiz_or_done()
+        current_id = queue[0]
+        total = session.get('syn_total', len(queue))
+        done = total - len(queue)
+        current_pos = done + 1
+        prev_available = False
+    else:
+        total = session.get('syn_total', len(word_ids))
+        # Lazy 迁移：旧 session 没有 syn_index，按 queue 残量推断
+        if 'syn_index' not in session:
+            queue = session.get('syn_queue') or word_ids
+            session['syn_index'] = max(0, total - len(queue))
+        idx = session['syn_index']
+        if idx >= total:
+            return _synonym_enter_quiz_or_done()
+        current_id = word_ids[idx]
+        current_pos = idx + 1
+        prev_available = idx > 0
 
-    current_id = queue[0]
     db = get_db()
     word = db.execute('SELECT * FROM words WHERE id=?', (current_id,)).fetchone()
     db.close()
 
     if not word:
-        # 词被删了，跳过
-        queue.pop(0)
-        session['syn_queue'] = queue
+        # 词被删了：游标推进一位
+        if 'syn_index' in session:
+            session['syn_index'] = session['syn_index'] + 1
+        else:
+            # 旧路径
+            queue = session.get('syn_queue') or []
+            if queue:
+                queue.pop(0)
+                session['syn_queue'] = queue
         return redirect(url_for('synonym_card'))
 
-    total = session.get('syn_total', len(queue))
-    done = total - len(queue)
     return render_template('flashcard_synonym.html',
                            word=dict(word),
-                           current=done + 1,
-                           total=total)
+                           current=current_pos,
+                           total=total,
+                           prev_available=prev_available)
 
 
 @app.route('/learn/synonym/next', methods=['POST'])
 def synonym_next():
+    word_ids = session.get('syn_word_ids') or []
+    total = session.get('syn_total', len(word_ids))
+
+    if word_ids:
+        # 游标模型
+        if 'syn_index' not in session:
+            queue = session.get('syn_queue') or word_ids
+            session['syn_index'] = max(0, total - len(queue))
+        idx = session['syn_index'] + 1
+        if idx >= total:
+            session['syn_index'] = total
+            return _synonym_enter_quiz_or_done()
+        session['syn_index'] = idx
+        # 同步维护 syn_queue 以保持兼容（虽然不再读）
+        session['syn_queue'] = word_ids[idx:]
+        return redirect(url_for('synonym_card'))
+
+    # 旧路径兜底
     queue = session.get('syn_queue') or []
     if queue:
         queue.pop(0)
         session['syn_queue'] = queue
     if not queue:
-        return redirect(url_for('synonym_done'))
+        return _synonym_enter_quiz_or_done()
+    return redirect(url_for('synonym_card'))
+
+
+@app.route('/learn/synonym/prev', methods=['POST'])
+def synonym_prev():
+    """同义词学习：回到上一张（首张时不动）"""
+    word_ids = session.get('syn_word_ids') or []
+    total = session.get('syn_total', len(word_ids))
+
+    if not word_ids:
+        return redirect(url_for('synonym_card'))
+
+    if 'syn_index' not in session:
+        queue = session.get('syn_queue') or word_ids
+        session['syn_index'] = max(0, total - len(queue))
+
+    session['syn_index'] = max(0, session['syn_index'] - 1)
+    # 同步 queue
+    session['syn_queue'] = word_ids[session['syn_index']:]
     return redirect(url_for('synonym_card'))
 
 
@@ -1476,9 +1669,11 @@ def synonym_next():
 def synonym_abandon():
     session.pop('syn_queue', None)
     session.pop('syn_total', None)
+    session.pop('syn_index', None)
     session.pop('syn_word_ids', None)
     session.pop('syn_started_at', None)
     session.pop('syn_list_id', None)
+    session.pop('syn_logged', None)
     return redirect(url_for('index'))
 
 
@@ -1488,10 +1683,14 @@ def synonym_done():
     word_ids = session.pop('syn_word_ids', None) or []
     started_at = session.pop('syn_started_at', None)
     list_id = session.pop('syn_list_id', None) or get_current_list_id()
+    already_logged = session.pop('syn_logged', False)
     session.pop('syn_queue', None)
+    session.pop('syn_index', None)
 
-    # 写入 study_log（mode='learn_synonym'），让同义词学习计入 streak / today_completed
-    if word_ids and list_id:
+    # 写入 study_log（mode='learn_synonym'）：
+    # - 若 _write_synonym_study_log() 已在跳测验前写过（syn_logged=True），跳过
+    # - 若词库太小未走测验、或本路由被直接访问，则在这里兜底写入
+    if not already_logged and word_ids and list_id:
         duration = 0
         if started_at:
             try:

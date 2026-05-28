@@ -68,13 +68,21 @@
     </div>
   </div>
 
-  <!-- 下一张按钮（翻转后才显示） -->
-  <div id="nextWrap" style="margin-top:32px; display:none;">
-    <form method="post" action="{{ url_for('synonym_next') }}">
-      <button type="submit" class="btn btn--primary btn--lg">
-        下一张 →
+  <!-- 导航按钮区：上一张永远显示（首张灰显），下一张翻面后显示 -->
+  <div class="flashcard-nav" style="margin-top:32px; display:flex; gap:12px; justify-content:center; align-items:center;">
+    <form method="post" action="{{ url_for('synonym_prev') }}" id="prevForm">
+      <button type="submit" class="btn btn--ghost btn--lg" id="prevBtn"
+              {% if not prev_available %}disabled aria-disabled="true"{% endif %}>
+        ← 上一张
       </button>
     </form>
+    <div id="nextWrap" style="display:none;">
+      <form method="post" action="{{ url_for('synonym_next') }}">
+        <button type="submit" class="btn btn--primary btn--lg">
+          下一张 →
+        </button>
+      </form>
+    </div>
   </div>
 
 </div>
@@ -84,7 +92,10 @@
 <script>
 const card = document.getElementById('card');
 const nextWrap = document.getElementById('nextWrap');
+const prevForm = document.getElementById('prevForm');
+const prevBtn = document.getElementById('prevBtn');
 const hintEl = card.querySelector('.flashcard__hint');
+const prevAvailable = {{ 'true' if prev_available else 'false' }};
 let isBack = false;
 let everFlipped = false;
 
@@ -108,6 +119,10 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Space') { e.preventDefault(); flip(); }
   if (e.code === 'ArrowRight' && everFlipped) {
     nextWrap.querySelector('form').submit();
+  }
+  if (e.code === 'ArrowLeft' && prevAvailable) {
+    e.preventDefault();
+    prevForm.submit();
   }
 });
 
