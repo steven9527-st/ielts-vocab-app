@@ -17,7 +17,13 @@
 - **数据备份** — 导出/导入 JSON 文件，换电脑不丢数据
 
 > **发音功能说明**：朗读使用浏览器原生 `window.speechSynthesis` API，无需联网，无需额外安装。
-> macOS Safari/Chrome、Windows 10+ Chrome/Edge 均支持；少数老旧浏览器（如老版 IE）不支持时，🔊 按钮会自动禁用并提示。
+> macOS Safari/Chrome 默认自带英文语音，开箱即用；Windows 10+ Chrome/Edge 支持本接口，
+> 但**中文系统默认未安装英文语音包**——首次点击 🔊 时应用会弹出安装指引。
+> 安装方法：设置 → 时间和语言 → 语言和区域 → 添加首选语言「English (United States)」→ 选项 → 下载语音。
+>
+> **音色优选**：Chrome 默认会挑选音质较差的 `Google US English` 而非系统 Siri 音色。
+> 应用内置 voice 优选逻辑，会自动绑定 macOS 上的 `Samantha` 等高品质本地音色，
+> 让 Chrome 与 Safari 听感保持一致。Windows 上优先选用微软神经网络音色（`Natural` / `Neural`）。
 
 ## 快速开始
 

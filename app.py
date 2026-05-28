@@ -2,6 +2,8 @@ import json
 import os
 import random
 import tempfile
+import threading
+import time
 import uuid
 from datetime import date, datetime, timedelta
 
@@ -18,6 +20,40 @@ SCANNED_PDF_HINT = (
     '这个 PDF 看起来是扫描图，无法直接读取文字。'
     '请先用 WPS / Adobe Acrobat 等工具将其转换为可选中文字的 PDF（或直接导出为 Excel），再上传。'
 )
+
+# ── 心跳机制（仅 is_frozen() 时启用） ───────────────
+# 浏览器每 10 秒发一次心跳；30 秒未收到心跳则进程自杀。
+# 解决用户关浏览器后进程残留导致下次启动冲突的问题。
+_HEARTBEAT_TIMEOUT_S = 30
+_HEARTBEAT_CHECK_INTERVAL_S = 5
+_last_heartbeat = time.time()
+_heartbeat_lock = threading.Lock()
+
+
+def _touch_heartbeat():
+    """刷新最后活跃时间戳——任何 HTTP 请求都会触发"""
+    global _last_heartbeat
+    with _heartbeat_lock:
+        _last_heartbeat = time.time()
+
+
+def _start_heartbeat_watchdog():
+    """启动后台守护线程，超过 _HEARTBEAT_TIMEOUT_S 无心跳则自杀。
+
+    仅在打包模式（is_frozen=True）下被调用。
+    使用 os._exit(0) 而非 sys.exit() 以确保从守护线程也能立即终止主进程。
+    """
+    def _watch():
+        while True:
+            time.sleep(_HEARTBEAT_CHECK_INTERVAL_S)
+            with _heartbeat_lock:
+                idle = time.time() - _last_heartbeat
+            if idle > _HEARTBEAT_TIMEOUT_S:
+                print(f'[IELTSVocab] No heartbeat for {idle:.0f}s, exiting.')
+                os._exit(0)
+
+    t = threading.Thread(target=_watch, daemon=True, name='heartbeat-watchdog')
+    t.start()
 
 # 打包环境下，Flask 需要明确指定 templates / static 资源路径（PyInstaller 解压目录）
 if is_frozen():
@@ -130,6 +166,21 @@ def _delete_excel_raw(token: str):
 @app.before_request
 def setup():
     init_db()
+    # 任何请求都隐式刷新心跳（用户主动操作即"活着"）
+    _touch_heartbeat()
+
+
+# ─────────────────────────────────────────
+# 心跳路由（仅打包模式下浏览器会主动发）
+# ─────────────────────────────────────────
+
+@app.route('/api/heartbeat', methods=['POST'])
+def api_heartbeat():
+    """浏览器持续心跳的目标。
+    实际刷新动作在 before_request 已完成；本路由仅作为浏览器
+    setInterval 的目标 endpoint。
+    """
+    return jsonify({'ok': True})
 
 
 # ─────────────────────────────────────────
@@ -155,6 +206,7 @@ def inject_nav_data():
         'nav_all_lists': all_lists,
         'nav_current_list_id': current_id,
         'nav_in_progress': in_progress,
+        'is_frozen': is_frozen(),
     }
 
 
@@ -1414,13 +1466,15 @@ def _open_browser_when_ready(url: str, delay: float = 1.5):
 
 if __name__ == '__main__':
     init_db()
-    # 打包环境：找可用端口 + 自动开浏览器
+    # 打包环境：找可用端口 + 自动开浏览器 + 启动心跳守护
     if is_frozen():
         port = _find_free_port(5000)
         url = f'http://127.0.0.1:{port}'
         print(f'[IELTSVocab] Starting on {url}')
+        _start_heartbeat_watchdog()
         _open_browser_when_ready(url)
         app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False)
     else:
         # 开发模式：固定 5000，不自动开浏览器（避免开发时打扰）
+        # 开发模式不启用心跳——本地开发要保留 Ctrl+C 控制权
         app.run(host='127.0.0.1', port=5000, debug=False)

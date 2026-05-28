@@ -925,3 +925,77 @@ td.cell-editable:focus { background: #f0f7ff; outline: 2px solid var(--clr-blue)
   font-family: var(--font-mono);
   letter-spacing: 0.5px;
 }
+
+/* ─────────────────────────────────────────
+   TTS 引导 Toast（无英文语音包时弹出）
+   ───────────────────────────────────────── */
+.tts-toast {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  padding: 16px;
+}
+.tts-toast[hidden] { display: none !important; }
+.tts-toast--visible { opacity: 1; }
+
+.tts-toast__card {
+  background: var(--clr-white);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+  max-width: 460px;
+  width: 100%;
+  padding: 24px;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.tts-toast__title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  margin-bottom: 14px;
+  color: var(--clr-text);
+}
+
+.tts-toast__body {
+  color: var(--clr-text-secondary);
+}
+.tts-toast__body p { margin: 0 0 10px 0; }
+.tts-toast__hint { margin-top: 14px !important; color: var(--clr-text); }
+
+.tts-toast__steps {
+  margin: 4px 0 12px 18px;
+  padding: 0;
+  font-size: 13px;
+  color: var(--clr-text-secondary);
+}
+.tts-toast__steps li { margin-bottom: 4px; }
+.tts-toast__steps code {
+  background: var(--clr-gray-100);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.tts-toast__doc {
+  font-size: 13px;
+  color: var(--clr-text-muted);
+}
+.tts-toast__doc a {
+  color: var(--clr-blue);
+  text-decoration: none;
+}
+.tts-toast__doc a:hover { text-decoration: underline; }
+
+.tts-toast__actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+}
