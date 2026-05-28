@@ -405,12 +405,14 @@ def api_switch_list_safe():
                 db.close()
             session.pop('learn_session_id', None)
             session.pop('learn_total', None)
+            session.pop('learn_max_reached', None)
         if has_active_quiz:
             _delete_quiz_data(session.pop('quiz_token', None))
             session.pop('quiz_index', None)
             session.pop('quiz_answers', None)
             session.pop('quiz_mode', None)
             session.pop('quiz_test_type', None)
+            session.pop('quiz_max_reached', None)
             session.pop('test_count', None)
 
     session['list_id'] = int(target_list_id)
@@ -782,11 +784,12 @@ def learn_start():
         (list_id,)
     )
     c = db.execute(
-        "INSERT INTO learn_session (list_id, date, word_ids, remaining_ids, status) VALUES (?, ?, ?, ?, 'in_progress')",
+        "INSERT INTO learn_session (list_id, date, word_ids, remaining_ids, current_index, status) VALUES (?, ?, ?, ?, 0, 'in_progress')",
         (list_id, str(date.today()), json.dumps(word_ids), json.dumps(word_ids))
     )
     session['learn_session_id'] = c.lastrowid
     session['learn_total'] = len(word_ids)
+    session['learn_max_reached'] = 1  # 进度峰值：从第 1 张开始
     db.commit()
     db.close()
 
@@ -799,7 +802,19 @@ def learn_continue():
     active = get_active_session(list_id)
     if active:
         session['learn_session_id'] = active['id']
-        session['learn_total'] = len(json.loads(active['word_ids']))
+        word_ids_all = json.loads(active['word_ids'])
+        session['learn_total'] = len(word_ids_all)
+        # Lazy 迁移：旧 session 无 current_index，按 remaining_ids 推算
+        ci = active.get('current_index')
+        if ci is None:
+            remaining = json.loads(active.get('remaining_ids') or '[]')
+            ci = max(0, len(word_ids_all) - len(remaining))
+            db = get_db()
+            db.execute('UPDATE learn_session SET current_index=? WHERE id=?', (ci, active['id']))
+            db.commit()
+            db.close()
+        # 进度峰值：续传时按当前位置初始化（无法恢复历史峰值）
+        session['learn_max_reached'] = max(session.get('learn_max_reached', 0), ci + 1)
     return redirect(url_for('learn_card'))
 
 
@@ -815,22 +830,41 @@ def learn_card():
         db.close()
         return redirect(url_for('index'))
 
-    remaining = json.loads(ls['remaining_ids'] or '[]')
-    if not remaining:
+    word_ids_all = json.loads(ls['word_ids'])
+    total = len(word_ids_all)
+    if total == 0:
         db.close()
         return redirect(url_for('learn_quiz'))
 
-    current_id = remaining[0]
+    # 读取游标，lazy 迁移旧 session（无 current_index）
+    ci = ls['current_index']
+    if ci is None:
+        remaining = json.loads(ls['remaining_ids'] or '[]')
+        ci = max(0, total - len(remaining))
+        db.execute('UPDATE learn_session SET current_index=? WHERE id=?', (ci, sess_id))
+        db.commit()
+
+    # 越界保护：clamp 到合法范围；若超过末尾则直接进入测验
+    if ci >= total:
+        db.close()
+        return redirect(url_for('learn_quiz'))
+    ci = max(0, ci)
+
+    current_id = word_ids_all[ci]
     word = db.execute('SELECT * FROM words WHERE id=?', (current_id,)).fetchone()
     db.close()
 
-    total = session.get('learn_total', len(json.loads(ls['word_ids'])))
-    done = total - len(remaining)
+    current_pos = ci + 1  # 1-based
+    # 更新进度峰值
+    max_reached = max(session.get('learn_max_reached', 0), current_pos)
+    session['learn_max_reached'] = max_reached
 
     return render_template('flashcard.html',
                            word=dict(word),
-                           current=done + 1,
-                           total=total)
+                           current=current_pos,
+                           total=total,
+                           display_progress=max_reached,
+                           prev_available=(ci > 0))
 
 
 @app.route('/learn/next', methods=['POST'])
@@ -841,23 +875,56 @@ def learn_next():
 
     db = get_db()
     ls = db.execute('SELECT * FROM learn_session WHERE id=?', (sess_id,)).fetchone()
-    remaining = json.loads(ls['remaining_ids'] or '[]')
-
-    if remaining:
-        remaining.pop(0)
-
-    if remaining:
-        db.execute('UPDATE learn_session SET remaining_ids=? WHERE id=?',
-                   (json.dumps(remaining), sess_id))
-        db.commit()
+    if not ls:
         db.close()
-        return redirect(url_for('learn_card'))
-    else:
-        db.execute('UPDATE learn_session SET remaining_ids=? WHERE id=?',
-                   (json.dumps([]), sess_id))
+        return redirect(url_for('index'))
+
+    word_ids_all = json.loads(ls['word_ids'])
+    total = len(word_ids_all)
+    ci = ls['current_index']
+    if ci is None:
+        # Lazy 迁移
+        remaining = json.loads(ls['remaining_ids'] or '[]')
+        ci = max(0, total - len(remaining))
+
+    ci_next = ci + 1
+    if ci_next >= total:
+        # 学完，进入测验；游标保持在末位
+        db.execute('UPDATE learn_session SET current_index=? WHERE id=?', (total - 1, sess_id))
         db.commit()
         db.close()
         return redirect(url_for('learn_quiz'))
+
+    db.execute('UPDATE learn_session SET current_index=? WHERE id=?', (ci_next, sess_id))
+    db.commit()
+    db.close()
+    return redirect(url_for('learn_card'))
+
+
+@app.route('/learn/prev', methods=['POST'])
+def learn_prev():
+    sess_id = session.get('learn_session_id')
+    if not sess_id:
+        return redirect(url_for('index'))
+
+    db = get_db()
+    ls = db.execute('SELECT * FROM learn_session WHERE id=?', (sess_id,)).fetchone()
+    if not ls:
+        db.close()
+        return redirect(url_for('index'))
+
+    word_ids_all = json.loads(ls['word_ids'])
+    total = len(word_ids_all)
+    ci = ls['current_index']
+    if ci is None:
+        remaining = json.loads(ls['remaining_ids'] or '[]')
+        ci = max(0, total - len(remaining))
+
+    ci_prev = max(0, ci - 1)
+    db.execute('UPDATE learn_session SET current_index=? WHERE id=?', (ci_prev, sess_id))
+    db.commit()
+    db.close()
+    return redirect(url_for('learn_card'))
 
 
 @app.route('/learn/abandon', methods=['POST'])
@@ -870,6 +937,7 @@ def learn_abandon():
         db.close()
     session.pop('learn_session_id', None)
     session.pop('learn_total', None)
+    session.pop('learn_max_reached', None)
     return redirect(url_for('index'))
 
 
@@ -915,6 +983,7 @@ def learn_quiz():
     session['quiz_index'] = 0
     session['quiz_answers'] = {}
     session['quiz_mode'] = 'learn'
+    session['quiz_max_reached'] = 1  # 进度峰值：从第 1 题开始
 
     return redirect(url_for('quiz_question'))
 
@@ -939,12 +1008,26 @@ def quiz_question():
     else:
         question_type = quiz_data.get('question_type', 'text')
 
+    current_pos = idx + 1
+    # 更新进度峰值
+    max_reached = max(session.get('quiz_max_reached', 0), current_pos)
+    session['quiz_max_reached'] = max_reached
+
+    # 回退后预选回原答案；并通过查询参数 from_prev 通知前端"不要自动播放音频"
+    answers = session.get('quiz_answers', {})
+    preselected = answers.get(str(idx), '')
+    from_prev = request.args.get('from_prev') == '1'
+
     return render_template('quiz.html',
                            question=q,
-                           current=idx + 1,
+                           current=current_pos,
                            total=len(questions),
                            mode=mode,
-                           question_type=question_type)
+                           question_type=question_type,
+                           display_progress=max_reached,
+                           prev_available=(idx > 0),
+                           preselected=preselected,
+                           from_prev=from_prev)
 
 
 @app.route('/quiz/answer', methods=['POST'])
@@ -956,11 +1039,19 @@ def quiz_answer():
 
     if idx < total:
         answers = session.get('quiz_answers', {})
-        answers[str(idx)] = selected
+        answers[str(idx)] = selected  # 覆盖式写入，支持回退后改答案
         session['quiz_answers'] = answers
         session['quiz_index'] = idx + 1
 
     return redirect(url_for('quiz_question'))
+
+
+@app.route('/quiz/prev', methods=['POST'])
+def quiz_prev():
+    idx = session.get('quiz_index', 0)
+    session['quiz_index'] = max(0, idx - 1)
+    # 标记为来自回退，前端听力题不自动播放
+    return redirect(url_for('quiz_question', from_prev=1))
 
 
 @app.route('/quiz/submit')
@@ -1030,7 +1121,9 @@ def quiz_submit():
 
             session.pop('learn_session_id', None)
             session.pop('learn_total', None)
+            session.pop('learn_max_reached', None)
             session.pop('quiz_answers', None)
+            session.pop('quiz_max_reached', None)
 
             return render_template('quiz_result.html',
                                    mode='learn',
@@ -1067,6 +1160,7 @@ def quiz_submit():
 
         session.pop('quiz_answers', None)
         session.pop('quiz_test_type', None)
+        session.pop('quiz_max_reached', None)
 
         return render_template('test_result.html',
                                correct=correct_count,
@@ -1098,6 +1192,7 @@ def quiz_retry():
     session['quiz_index'] = 0
     session['quiz_answers'] = {}
     session['quiz_mode'] = 'learn'
+    session['quiz_max_reached'] = 1  # 进度峰值重置
 
     return jsonify({'ok': True})
 
@@ -1163,6 +1258,7 @@ def test_start():
     session['quiz_answers'] = {}
     session['quiz_mode'] = 'test'
     session['quiz_test_type'] = test_type
+    session['quiz_max_reached'] = 1  # 进度峰值重置
     session['test_count'] = m
 
     return redirect(url_for('quiz_question'))
