@@ -56,11 +56,11 @@
 ## 8. 文档与验收
 
 - [x] 8.1 更新 `README.md`「功能」段落：翻卡学习追加"双向流转"，学习测验/测试模式追加"可回退改答案"
-- [ ] 8.2 在 main 分支提交所有改动；commit message 标注 "feat(navigation): 翻卡与测验支持双向流转"
-- [ ] 8.3 切到 packaging 分支 merge main，跑 `bash build_mac.sh` 生成新 .app/.dmg
-- [ ] 8.4 push packaging 到远端，提示用户在 Win 虚拟机 pull 后 `build_win.bat`
+- [x] 8.2 在 main 分支提交所有改动；commit message 标注 "feat(navigation): 翻卡与测验支持双向流转"
+- [x] 8.3 切到 packaging 分支 merge main，跑 `bash build_mac.sh` 生成新 .app/.dmg
+- [x] 8.4 push packaging 到远端，提示用户在 Win 虚拟机 pull 后 `build_win.bat`
 - [x] 8.5 `openspec validate add-prev-navigation --strict` 通过
-- [ ] 8.6 Mac 实测：翻卡学习 → 学到第 5 张 → ← 回到第 3 张 → 卡片正面 → 翻看 → → 回到第 4 张 ✓
-- [ ] 8.7 Mac 实测：学习测验答完第 3 题 → ← 回第 2 题 → 看到原选项 → 改选 → → 继续 → 提交后成绩按改后计算 ✓
-- [ ] 8.8 Mac 实测：正式测试（test 模式）听力题 → ← 回退 → 不自动重播 → 主动点 🔊 仍能播 ✓
+- [x] 8.6 Mac 实测：翻卡学习 → 学到第 5 张 → ← 回到第 3 张 → 卡片正面 → 翻看 → → 回到第 4 张 ✓
+- [x] 8.7 Mac 实测：学习测验答完第 3 题 → ← 回第 2 题 → 看到原选项 → 改选 → → 继续 → 提交后成绩按改后计算 ✓
+- [x] 8.8 Mac 实测：正式测试（test 模式）听力题 → ← 回退 → 不自动重播 → 主动点 🔊 仍能播 ✓
 - [ ] 8.9 用户 Win 实测：双向流转在打包环境下行为一致 ✓
