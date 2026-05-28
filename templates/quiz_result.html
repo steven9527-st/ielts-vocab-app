@@ -8,9 +8,17 @@
     <div class="result-score result-score--pass">100%</div>
     <div class="result-label">今日通关 ✅</div>
     <div style="font-size:16px; color:var(--clr-text-secondary); margin-bottom:var(--space-8);">
-      本次学习的 {{ total }} 个单词已全部标记为已掌握
+      {% if synonym_flow %}
+        本次共测验了 {{ total }} 个同义词，全部答对
+      {% else %}
+        本次学习的 {{ total }} 个单词已全部标记为已掌握
+      {% endif %}
     </div>
-    <a href="{{ url_for('index') }}" class="btn btn--primary btn--lg">返回首页</a>
+    {% if synonym_flow %}
+      <a href="{{ url_for('synonym_done') }}" class="btn btn--primary btn--lg">完成本次学习</a>
+    {% else %}
+      <a href="{{ url_for('index') }}" class="btn btn--primary btn--lg">返回首页</a>
+    {% endif %}
 
   {% else %}
     <div class="result-score result-score--fail">{{ accuracy }}%</div>
@@ -20,10 +28,17 @@
       <button class="btn btn--primary btn--lg" id="retryBtn">
         还有 {{ wrong_items | length }} 题需要重做
       </button>
+      {% if synonym_flow %}
+      <form method="post" action="{{ url_for('synonym_abandon') }}">
+        <button type="submit" class="btn btn--ghost"
+                onclick="return confirm('放弃后本次同义词学习的测验不再继续')">放弃测验</button>
+      </form>
+      {% else %}
       <form method="post" action="{{ url_for('learn_abandon') }}">
         <button type="submit" class="btn btn--ghost"
                 onclick="return confirm('放弃后本次单词不会标记为已掌握')">放弃今日</button>
       </form>
+      {% endif %}
     </div>
 
     <!-- 错题列表 -->
