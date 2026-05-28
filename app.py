@@ -262,10 +262,15 @@ def get_list_stats(list_id):
 
 
 def calc_streak():
-    """计算全局连续打卡天数（任意词库完成学习100%通关）"""
+    """计算全局连续打卡天数（任意词库 / 任意学习模式 100% 通关）
+
+    包含的 mode：
+      • 'learn'          普通翻卡学习通关
+      • 'learn_synonym'  同义词学习完成（unify-learn-entry-by-list-type 新增）
+    """
     db = get_db()
     rows = db.execute(
-        "SELECT DISTINCT date FROM study_log WHERE mode='learn' AND accuracy=1.0 ORDER BY date DESC"
+        "SELECT DISTINCT date FROM study_log WHERE mode IN ('learn', 'learn_synonym') AND accuracy=1.0 ORDER BY date DESC"
     ).fetchall()
     db.close()
 
@@ -299,10 +304,10 @@ def get_active_session(list_id):
 
 
 def today_completed(list_id):
-    """今日是否已通关（accuracy=1.0 的学习记录）"""
+    """今日是否已通关（普通学习或同义词学习任一完成即视为通关）"""
     db = get_db()
     row = db.execute(
-        "SELECT id FROM study_log WHERE list_id=? AND mode='learn' AND accuracy=1.0 AND date=?",
+        "SELECT id FROM study_log WHERE list_id=? AND mode IN ('learn', 'learn_synonym') AND accuracy=1.0 AND date=?",
         (list_id, str(date.today()))
     ).fetchone()
     db.close()
@@ -431,6 +436,8 @@ def index():
     stats = get_list_stats(list_id)
     streak = calc_streak()
     active_session = get_active_session(list_id)
+    # 同义词学习的进度存在 Flask session 的 syn_queue 中（非 DB），单独检测
+    active_syn_session = bool(session.get('syn_queue'))
     completed_today = today_completed(list_id)
 
     return render_template('index.html',
@@ -440,6 +447,7 @@ def index():
                            stats=stats,
                            streak=streak,
                            active_session=active_session,
+                           active_syn_session=active_syn_session,
                            completed_today=completed_today)
 
 
@@ -1422,6 +1430,9 @@ def synonym_start():
 
     session['syn_queue'] = word_ids
     session['syn_total'] = len(word_ids)
+    session['syn_word_ids'] = word_ids  # 原始全集，供 done 时写 study_log
+    session['syn_started_at'] = datetime.now().isoformat()  # 开始时间，供 done 时计算 duration
+    session['syn_list_id'] = list_id  # 锁定本次学习对应的词库 id（即使中途切库也写对日志）
     return redirect(url_for('synonym_card'))
 
 
@@ -1465,13 +1476,41 @@ def synonym_next():
 def synonym_abandon():
     session.pop('syn_queue', None)
     session.pop('syn_total', None)
+    session.pop('syn_word_ids', None)
+    session.pop('syn_started_at', None)
+    session.pop('syn_list_id', None)
     return redirect(url_for('index'))
 
 
 @app.route('/learn/synonym/done')
 def synonym_done():
     total = session.pop('syn_total', 0)
+    word_ids = session.pop('syn_word_ids', None) or []
+    started_at = session.pop('syn_started_at', None)
+    list_id = session.pop('syn_list_id', None) or get_current_list_id()
     session.pop('syn_queue', None)
+
+    # 写入 study_log（mode='learn_synonym'），让同义词学习计入 streak / today_completed
+    if word_ids and list_id:
+        duration = 0
+        if started_at:
+            try:
+                t0 = datetime.fromisoformat(started_at)
+                duration = max(0, int((datetime.now() - t0).total_seconds()))
+            except Exception:
+                duration = 0
+        try:
+            db = get_db()
+            db.execute(
+                'INSERT INTO study_log (list_id, date, mode, word_ids, accuracy, duration_s) VALUES (?,?,?,?,?,?)',
+                (list_id, str(date.today()), 'learn_synonym', json.dumps(word_ids), 1.0, duration)
+            )
+            db.commit()
+            db.close()
+        except Exception as e:
+            # 写入失败仅 warn，不阻塞页面跳转
+            print(f'[synonym_done] study_log 写入失败: {e}')
+
     return render_template('flashcard_synonym_done.html', total=total)
 
 
