@@ -28,13 +28,13 @@
 
 ## 6. 重新打包（构建后步骤）
 
-- [ ] 6.1 切到 packaging 分支，merge main，重新跑 `bash build_mac.sh` 生成新 .dmg
+- [x] 6.1 切到 packaging 分支，merge main，重新跑 `bash build_mac.sh` 生成新 .dmg
 - [ ] 6.2 在 Windows 虚拟机重新跑 `build_win.bat` 生成新 zip
 - [ ] 6.3 Windows 用户操作指引：删除错误的「雅思阅读高分词汇」词库 → 重新导入
 
 ## 7. 验收
 
-- [ ] 7.1 `雅思阅读高分词汇.pdf` 在新 Mac App 中导入后，词库管理页显示 english=aback 等正确数据
-- [ ] 7.2 同义词词库 PDF（add-pdf-table-import 时期的样本）继续走表格路径，e2e 测试不退化
+- [x] 7.1 `雅思阅读高分词汇.pdf` 在新 Mac App 中导入后，词库管理页显示 english=aback 等正确数据
+- [x] 7.2 同义词词库 PDF（add-pdf-table-import 时期的样本）继续走表格路径，e2e 测试不退化
 - [ ] 7.3 Windows 新构建产物中同一 PDF 同样得到正确结果
-- [ ] 7.4 `openspec validate fix-pdf-import-route-priority --strict` 通过
+- [x] 7.4 `openspec validate fix-pdf-import-route-priority --strict` 通过
