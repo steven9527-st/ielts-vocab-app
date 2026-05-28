@@ -34,6 +34,13 @@
                   aria-label="朗读单词">🔊</button>
         </div>
         {% endif %}
+        {% if word.chinese %}
+        {% for line in (word.chinese or '').split(' | ') %}
+          {% if line.strip() %}
+          <div class="synonym-front-chinese">{{ line }}</div>
+          {% endif %}
+        {% endfor %}
+        {% endif %}
         <div class="flashcard__hint">点击查看同义词</div>
       </div>
       <div class="flashcard__back">
@@ -42,7 +49,7 @@
           {% set syn_list = (word.synonyms or '').replace('；', ';').replace('，', ',').replace('、', ',').replace('/', ',').split(',') %}
           {% for s in syn_list %}
             {% if s.strip() %}
-            <div class="meaning-line" style="font-size:24px; font-weight:500; line-height:1.6;">
+            <div class="meaning-line{% if s.strip() is has_cjk %} synonym-syn--cn{% endif %}" style="font-size:24px; font-weight:500; line-height:1.6;">
               {{ s.strip() }}
             </div>
             {% endif %}

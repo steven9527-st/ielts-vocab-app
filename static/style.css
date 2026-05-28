@@ -1008,3 +1008,19 @@ td.cell-editable:focus { background: #f0f7ff; outline: 2px solid var(--clr-blue)
   display: flex;
   justify-content: flex-end;
 }
+
+/* ─────────────────────────────────────────
+   同义词卡片：正面中文 + 背面 SYNONYMS 中文项
+   ───────────────────────────────────────── */
+.synonym-front-chinese {
+  margin-top: 12px;
+  font-size: 14px;
+  color: var(--clr-text-muted);
+  line-height: 1.5;
+  max-width: 90%;
+  text-align: center;
+}
+.synonym-syn--cn {
+  color: var(--clr-text-muted);
+  font-weight: 400;
+}

@@ -66,6 +66,20 @@ else:
     app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
+
+def has_cjk(s) -> bool:
+    """判断字符串是否包含中日韩统一表意文字（CJK Unified Ideographs U+4E00–U+9FFF）。
+
+    用作 Jinja test：模板内可写 `{% if value is has_cjk %}` 进行中文检测。
+    对非字符串输入安全返回 False，避免模板渲染抛错。
+    """
+    if not isinstance(s, str):
+        return False
+    return any('\u4e00' <= ch <= '\u9fff' for ch in s)
+
+
+app.jinja_env.tests['has_cjk'] = has_cjk
+
 # 服务器端临时存储目录（解析结果太大不能放 cookie）
 _TMP_DIR = tmp_parse_dir()
 
