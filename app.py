@@ -309,21 +309,96 @@ def today_completed(list_id):
     return row is not None
 
 
-def generate_quiz_questions(word_ids, list_id):
-    """为 word_ids 列表生成 4 选 1 题目，返回题目列表"""
+def _get_list_type(list_id) -> str:
+    """读取词库 type（'standard' / 'synonym'）；找不到则返回 'standard' 兜底。"""
+    if not list_id:
+        return 'standard'
+    db = get_db()
+    row = db.execute('SELECT type FROM word_lists WHERE id=?', (list_id,)).fetchone()
+    db.close()
+    if not row:
+        return 'standard'
+    val = row['type'] if 'type' in row.keys() else None
+    return val if val in ('standard', 'synonym') else 'standard'
+
+
+def generate_quiz_questions(word_ids, list_id, list_type='standard'):
+    """为 word_ids 列表生成 4 选 1 题目，返回题目列表
+
+    list_type:
+      'standard' — 选项均为中文释义（既有逻辑）
+      'synonym'  — 选项均为英文同义词（同义词词库专用）
+                   要求同词库内有同义词的词数 ≥ 4，否则自动降级到 standard
+    """
     db = get_db()
     questions = []
-    all_words = db.execute('SELECT id, english, chinese FROM words WHERE list_id=?', (list_id,)).fetchall()
+    # 同义词模式需读 synonyms 字段
+    if list_type == 'synonym':
+        all_words = db.execute(
+            'SELECT id, english, chinese, synonyms FROM words WHERE list_id=?',
+            (list_id,)
+        ).fetchall()
+    else:
+        all_words = db.execute(
+            'SELECT id, english, chinese FROM words WHERE list_id=?',
+            (list_id,)
+        ).fetchall()
     all_words = [dict(w) for w in all_words]
     db.close()
 
     if len(all_words) < 4:
         return None  # 词库不足
 
+    # 同义词模式需要 ≥ 4 个有 synonyms 的词；否则降级到 standard
+    if list_type == 'synonym':
+        words_with_syn = [w for w in all_words if (w.get('synonyms') or '').strip()]
+        if len(words_with_syn) < 4:
+            print(f'[quiz] list {list_id} type=synonym 但有同义词的词不足 4 个 ({len(words_with_syn)})，降级到 standard')
+            list_type = 'standard'
+
     for wid in word_ids:
         correct = next((w for w in all_words if w['id'] == wid), None)
         if not correct:
             continue
+
+        if list_type == 'synonym':
+            # 英文同义词选项：正确答案 = 当前词 synonyms；干扰项 = 其他词的 synonyms
+            correct_syn = (correct.get('synonyms') or '').strip()
+            if not correct_syn:
+                # 当前词没有同义词，跳过此题（学习路径会保证全有 synonyms，但 test 模式可能从全词库随机选到无 syn 的词）
+                continue
+            distractor_pool = [
+                (w.get('synonyms') or '').strip()
+                for w in all_words
+                if w['id'] != wid and (w.get('synonyms') or '').strip() and (w.get('synonyms') or '').strip() != correct_syn
+            ]
+            # 去重（避免不同词有相同 synonyms 时干扰项重复）
+            distractor_pool = list(dict.fromkeys(distractor_pool))
+            if len(distractor_pool) < 3:
+                # 干扰项不足，本题降级为中文选项
+                others = [w for w in all_words if w['id'] != wid]
+                distractors = random.sample(others, min(3, len(others)))
+                options = [correct['chinese']] + [d['chinese'] for d in distractors]
+                random.shuffle(options)
+                questions.append({
+                    'word_id': wid,
+                    'english': correct['english'],
+                    'correct': correct['chinese'],
+                    'options': options,
+                })
+                continue
+            distractors = random.sample(distractor_pool, 3)
+            options = [correct_syn] + distractors
+            random.shuffle(options)
+            questions.append({
+                'word_id': wid,
+                'english': correct['english'],
+                'correct': correct_syn,
+                'options': options,
+            })
+            continue
+
+        # 标准模式：原中文选项逻辑
         others = [w for w in all_words if w['id'] != wid]
         distractors = random.sample(others, min(3, len(others)))
         options = [correct['chinese']] + [d['chinese'] for d in distractors]
@@ -698,6 +773,8 @@ def import_excel_apply():
 
     preview_token = _save_parse_result(entries)
     session['import_token'] = preview_token
+    # 持久化 import_mode 到 session，供 import_confirm 写词库 type 使用
+    session['import_mode'] = import_mode
     # 清理 excel raw token
     _delete_excel_raw(session.pop('excel_raw_token', None))
 
@@ -726,10 +803,13 @@ def import_confirm():
         return jsonify({'error': '没有可导入的词条'}), 400
 
     db = get_db()
+    # 读取导入模式（来自 excel_apply 路径），写入词库 type 字段以驱动测验出题逻辑
+    import_mode = session.get('import_mode', 'standard')
+    list_type = 'synonym' if import_mode == 'synonym' else 'standard'
     # 创建词库记录
     c = db.execute(
-        'INSERT INTO word_lists (name, source_file, word_count) VALUES (?, ?, 0)',
-        (list_name, session.get('import_filename', ''))
+        'INSERT INTO word_lists (name, source_file, word_count, type) VALUES (?, ?, 0, ?)',
+        (list_name, session.get('import_filename', ''), list_type)
     )
     new_list_id = c.lastrowid
 
@@ -759,6 +839,7 @@ def import_confirm():
     session['list_picked'] = True
     _delete_parse_result(session.pop('import_token', None))
     session.pop('import_filename', None)
+    session.pop('import_mode', None)
 
     return jsonify({'success': True, 'count': count, 'list_id': new_list_id})
 
@@ -994,7 +1075,9 @@ def learn_quiz():
     word_ids = json.loads(quiz_ids_raw) if quiz_ids_raw else json.loads(ls['word_ids'])
     db.close()
 
-    questions = generate_quiz_questions(word_ids, list_id)
+    # 学习测验：按词库 type 决定出题方式（synonym 词库 → 英文同义词选项）
+    list_type = _get_list_type(list_id)
+    questions = generate_quiz_questions(word_ids, list_id, list_type=list_type)
     if questions is None:
         return render_template('quiz_error.html', message='词库单词数不足（至少需要 4 个词）')
 
@@ -1203,7 +1286,9 @@ def quiz_retry():
         return jsonify({'error': '无词库'}), 400
     word_ids = [w['word_id'] for w in wrong_items]
 
-    questions = generate_quiz_questions(word_ids, list_id)
+    # 错题循环：与首轮测验保持一致的出题方式（按词库 type）
+    list_type = _get_list_type(list_id)
+    questions = generate_quiz_questions(word_ids, list_id, list_type=list_type)
     if not questions:
         return jsonify({'error': '无法生成题目'}), 400
 
@@ -1264,7 +1349,13 @@ def test_start():
     db.close()
 
     word_ids = [w['id'] for w in words]
-    questions = generate_quiz_questions(word_ids, list_id)
+    # 正式测试：听力模式强制 standard（保持"听英文 → 选中文释义"语义）；
+    # 文字模式按词库 type 决定（synonym 词库 → 英文同义词选项）
+    if test_type == 'audio':
+        list_type = 'standard'
+    else:
+        list_type = _get_list_type(list_id)
+    questions = generate_quiz_questions(word_ids, list_id, list_type=list_type)
     if not questions:
         return render_template('quiz_error.html', message='词库单词数不足（至少需要 4 个词）')
 
