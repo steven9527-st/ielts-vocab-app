@@ -33,15 +33,15 @@
 ## 6. 文档与构建
 
 - [x] 6.1 更新 README.md「发音功能说明」段落：补充"Windows 中文系统需手动安装英文语音包"一句话
-- [ ] 6.2 在 main 分支提交所有改动
-- [ ] 6.3 切到 packaging 分支 merge main，重新跑 `bash build_mac.sh` 生成新 .app/.dmg
-- [ ] 6.4 push packaging 分支到远端，让 Win 虚拟机能 pull 新代码后重新构建
+- [x] 6.2 在 main 分支提交所有改动
+- [x] 6.3 切到 packaging 分支 merge main，重新跑 `bash build_mac.sh` 生成新 .app/.dmg
+- [x] 6.4 push packaging 分支到远端，让 Win 虚拟机能 pull 新代码后重新构建
 
 ## 7. 验收
 
-- [ ] 7.1 Mac App 双击启动 → 关浏览器 → 30 秒后进程自动消失 ✓
+- [x] 7.1 Mac App 双击启动 → 关浏览器 → 30 秒后进程自动消失 ✓
 - [ ] 7.2 Mac App 30 秒后再次双击 → 浏览器正常打开 ✓（不再"打不开"）
-- [ ] 7.3 Mac 上有英文语音 → 点 🔊 正常发声 ✓（不应误弹 Toast）
+- [x] 7.3 Mac 上有英文语音 → 点 🔊 正常发声 ✓（不应误弹 Toast）
 - [x] 7.4 `openspec validate fix-app-lifecycle --strict` 通过
-- [ ] 7.5 用户 Win 重新打包后实测：关浏览器 30 秒后任务管理器无 IELTSVocab.exe ✓
+- [x] 7.5 用户 Win 重新打包后实测：关浏览器 30 秒后任务管理器无 IELTSVocab.exe ✓
 - [ ] 7.6 用户 Win 实测：点 🔊 弹出 Toast 含安装指引 ✓
