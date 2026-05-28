@@ -632,6 +632,7 @@ def import_excel_apply():
     phonetic_col = data.get('phonetic_col', -1)
     pos_col = data.get('pos_col', -1)
     synonym_col = data.get('synonym_col', -1)
+    english_col_2 = data.get('english_col_2', -1)
     skip_first_row = bool(data.get('skip_first_row', True))
     import_mode = data.get('import_mode', 'standard')
     if import_mode not in ('standard', 'synonym'):
@@ -643,6 +644,7 @@ def import_excel_apply():
         phonetic_col = int(phonetic_col)
         pos_col = int(pos_col)
         synonym_col = int(synonym_col)
+        english_col_2 = int(english_col_2)
     except (TypeError, ValueError):
         return jsonify({'error': '列参数格式错误'}), 400
 
@@ -650,6 +652,11 @@ def import_excel_apply():
         return jsonify({'error': '请指定英文列和中文列'}), 400
     if english_col == chinese_col:
         return jsonify({'error': '英文列和中文列不能相同'}), 400
+    # 双英文列校验：仅在指定 english_col_2 时（>=0）需校验冲突，
+    # 且仅在同义词模式下生效——标准模式即便误传也忽略
+    if import_mode == 'synonym' and english_col_2 >= 0:
+        if english_col_2 == english_col or english_col_2 == chinese_col:
+            return jsonify({'error': '英文列 2 不能与英文列 / 中文列相同'}), 400
 
     token = session.get('excel_raw_token', '')
     raw = _load_excel_raw(token)
@@ -665,6 +672,7 @@ def import_excel_apply():
             phonetic_col=phonetic_col,
             pos_col=pos_col,
             synonym_col=synonym_col,
+            english_col_2=english_col_2,
             skip_first_row=skip_first_row,
             import_mode=import_mode,
         )
