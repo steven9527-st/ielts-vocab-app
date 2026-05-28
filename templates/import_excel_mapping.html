@@ -26,6 +26,21 @@
         </div>
       </div>
 
+      <div id="englishCol2Wrap" style="display:none;">
+        <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">
+          英文列 2
+          <span style="font-weight:400; color:var(--clr-text-muted); margin-left:4px; font-size:12px;">（同义词配对，可选）</span>
+        </label>
+        <div class="select-wrap">
+          <select id="englishCol2">
+            <option value="-1">— 未指定 —</option>
+            {% for label in col_labels %}
+            <option value="{{ loop.index0 }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
       <div>
         <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">
           中文列 <span style="color:#cc2200;">*</span>
@@ -133,25 +148,34 @@
 {% block scripts %}
 <script>
 const englishSel = document.getElementById('englishCol');
+const englishSel2 = document.getElementById('englishCol2');
+const englishSel2Wrap = document.getElementById('englishCol2Wrap');
 const chineseSel = document.getElementById('chineseCol');
 const skipFirstCb = document.getElementById('skipFirstRow');
 const continueBtn = document.getElementById('continueBtn');
 const status = document.getElementById('applyStatus');
+const modeRadios = document.querySelectorAll('input[name="importMode"]');
 
 const PHONETIC_COL = {{ guess.phonetic_col }};
 const POS_COL = {{ guess.pos_col }};
 const SYNONYM_COL = {{ guess.synonym_col }};
 
-const COLOR_EN = '#f0f7ff';    // 浅蓝 — 英文列
-const COLOR_ZH = '#fdf2f7';    // 浅粉 — 中文列
-const COLOR_PHON = '#fef9e6';  // 浅黄 — 音标列
-const COLOR_POS = '#f0f9eb';   // 浅绿 — 词性列
-const COLOR_SYN = '#f3eaff';   // 浅紫 — 同义词列
+const COLOR_EN = '#f0f7ff';     // 浅蓝 — 英文列
+const COLOR_EN2 = '#dbe7ff';    // 略深蓝 — 英文列 2（同义词配对）
+const COLOR_ZH = '#fdf2f7';     // 浅粉 — 中文列
+const COLOR_PHON = '#fef9e6';   // 浅黄 — 音标列
+const COLOR_POS = '#f0f9eb';    // 浅绿 — 词性列
+const COLOR_SYN = '#f3eaff';    // 浅紫 — 同义词列
 
 function highlightCol(ci, color) {
   document.querySelectorAll(`#previewTable [data-col="${ci}"]`).forEach(el => {
     el.style.background = color;
   });
+}
+
+function getCurrentMode() {
+  const el = document.querySelector('input[name="importMode"]:checked');
+  return el ? el.value : 'standard';
 }
 
 function refreshHighlight() {
@@ -164,12 +188,25 @@ function refreshHighlight() {
   if (POS_COL >= 0) highlightCol(POS_COL, COLOR_POS);
   if (SYNONYM_COL >= 0) highlightCol(SYNONYM_COL, COLOR_SYN);
   highlightCol(parseInt(englishSel.value), COLOR_EN);
+  // 英文列 2 仅在同义词模式下高亮
+  if (getCurrentMode() === 'synonym') {
+    const en2 = parseInt(englishSel2.value);
+    if (en2 >= 0) highlightCol(en2, COLOR_EN2);
+  }
   highlightCol(parseInt(chineseSel.value), COLOR_ZH);
 }
 
+function refreshModeUI() {
+  // 同义词模式时显示英文列 2，标准模式隐藏（保留已选值，便于切回）
+  englishSel2Wrap.style.display = (getCurrentMode() === 'synonym') ? '' : 'none';
+  refreshHighlight();
+}
+
 englishSel.addEventListener('change', refreshHighlight);
+englishSel2.addEventListener('change', refreshHighlight);
 chineseSel.addEventListener('change', refreshHighlight);
-refreshHighlight();
+modeRadios.forEach(r => r.addEventListener('change', refreshModeUI));
+refreshModeUI();
 
 continueBtn.addEventListener('click', async () => {
   const en = parseInt(englishSel.value);
@@ -180,9 +217,16 @@ continueBtn.addEventListener('click', async () => {
     return;
   }
 
-  // 读取导入模式单选
-  const modeEl = document.querySelector('input[name="importMode"]:checked');
-  const importMode = modeEl ? modeEl.value : 'standard';
+  const importMode = getCurrentMode();
+  // 仅在同义词模式下读 english_col_2；标准模式始终传 -1
+  const en2 = (importMode === 'synonym') ? parseInt(englishSel2.value) : -1;
+  if (importMode === 'synonym' && en2 >= 0) {
+    if (en2 === en || en2 === zh) {
+      status.textContent = '❌ 英文列 2 不能与英文列 / 中文列相同';
+      status.style.color = '#cc2200';
+      return;
+    }
+  }
 
   continueBtn.disabled = true;
   continueBtn.textContent = '处理中...';
@@ -198,6 +242,7 @@ continueBtn.addEventListener('click', async () => {
         phonetic_col: PHONETIC_COL,
         pos_col: POS_COL,
         synonym_col: SYNONYM_COL,
+        english_col_2: en2,
         skip_first_row: skipFirstCb.checked,
         import_mode: importMode,
       })

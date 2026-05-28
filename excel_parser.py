@@ -329,6 +329,28 @@ def guess_columns(rows: list[list[str]]) -> dict:
 # 应用映射 → 标准 entries
 # ─────────────────────────────────────────
 
+def _split_chinese_pair(text) -> tuple[str, str]:
+    """按第一个 / 把中文文本拆成两半，用于双英文列同义词词库导入。
+
+    Cases:
+      "A / B"     → ("A", "B")
+      "A/B"       → ("A", "B")           # 无空格也支持
+      "A / B / C" → ("A", "B / C")       # 仅取第一个分隔符
+      "A"         → ("A", "")            # 无分隔符：全部归前半
+      ""          → ("", "")
+      None / 非字符串 → ("", "")
+    """
+    if not isinstance(text, str):
+        return ('', '')
+    s = text.strip()
+    if not s:
+        return ('', '')
+    if '/' not in s:
+        return (s, '')
+    left, right = s.split('/', 1)
+    return (left.strip(), right.strip())
+
+
 def apply_mapping(
     rows: list[list[str]],
     english_col: int,
@@ -336,6 +358,7 @@ def apply_mapping(
     phonetic_col: int = -1,
     pos_col: int = -1,
     synonym_col: int = -1,
+    english_col_2: int = -1,
     skip_first_row: bool = True,
     import_mode: str = 'standard',
 ) -> list[dict]:
@@ -345,11 +368,23 @@ def apply_mapping(
       'standard' — B 列只写入 chinese 字段（默认行为）
       'synonym'  — B 列同时写入 chinese 和 synonyms 字段（同义词词库专用）
                    显式 synonym_col 优先于 import_mode 推断的同义词。
+
+    english_col_2:
+      仅在 import_mode='synonym' 且 english_col_2 >= 0 时生效。
+      启用后每行展开为两条互为同义词的 entries：
+        entry1: english=col[english_col],   chinese=split_left(col[chinese_col]),
+                synonyms=col[english_col_2]
+        entry2: english=col[english_col_2], chinese=split_right(col[chinese_col]),
+                synonyms=col[english_col]
+      D 列中文按第一个 '/' 拆分；无分隔符时前半归 entry1，entry2.chinese 为空。
     """
     if english_col < 0 or chinese_col < 0:
         raise RuntimeError('必须指定英文列和中文列')
     if import_mode not in ('standard', 'synonym'):
         raise RuntimeError(f'不支持的导入模式：{import_mode}')
+
+    # 双英文列展开仅在同义词模式下生效；标准模式即便误传 english_col_2 也忽略
+    paired_mode = (import_mode == 'synonym' and english_col_2 is not None and english_col_2 >= 0)
 
     data = rows[1:] if skip_first_row else rows
     entries: list[dict] = []
@@ -365,6 +400,34 @@ def apply_mapping(
         phonetic = _get(row, phonetic_col)
         pos = _get(row, pos_col)
         synonyms = _get(row, synonym_col)
+
+        if paired_mode:
+            english2 = _get(row, english_col_2)
+            cn_left, cn_right = _split_chinese_pair(chinese)
+
+            # 整行空白 → 跳过（不计入 entries）
+            if not english and not english2 and not chinese and not phonetic and not pos:
+                continue
+
+            # entry1：英文列 1 词条
+            entries.append({
+                'english': english,
+                'chinese': cn_left,
+                'phonetic': phonetic,
+                'pos': pos,
+                'synonyms': english2,  # 互为同义词
+                'failed': (not english) or (not cn_left),
+            })
+            # entry2：英文列 2 词条（互为同义词）
+            entries.append({
+                'english': english2,
+                'chinese': cn_right,
+                'phonetic': '',  # 第二英文列没有自己的音标/词性，置空
+                'pos': '',
+                'synonyms': english,
+                'failed': (not english2) or (not cn_right),
+            })
+            continue
 
         # 同义词模式：若没有显式同义词列，则把 chinese 复制到 synonyms
         if import_mode == 'synonym' and not synonyms:
