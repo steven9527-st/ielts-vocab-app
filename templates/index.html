@@ -62,30 +62,30 @@
   <div style="text-align:center; font-size:18px; font-weight:600; color: var(--clr-red); margin-bottom: 24px;">
     今日已通关 ✅
   </div>
-  {% elif active_session %}
+  {% elif active_session or (current_list.type == 'synonym' and active_syn_session) %}
   <div style="text-align:center; margin-bottom: 24px;">
     <span style="font-size:14px; color:var(--clr-text-secondary);">上次学习未完成</span>
   </div>
   {% endif %}
 
-  <!-- 操作按钮 -->
+  <!-- 操作按钮：根据词库 type 智能分发到普通翻卡 / 同义词翻卡 -->
+  {% set is_synonym = (current_list.type == 'synonym') %}
+  {% set start_url = url_for('synonym_setup') if is_synonym else url_for('learn_setup') %}
+  {% set continue_url = url_for('synonym_setup') if is_synonym else url_for('learn_continue') %}
+  {% set has_progress = active_session if not is_synonym else active_syn_session %}
+
   <div class="action-row" style="justify-content: center;">
-    {% if stats.unmastered == 0 and stats.total > 0 %}
+    {% if stats.unmastered == 0 and stats.total > 0 and not is_synonym %}
       <button class="btn btn--primary btn--lg" disabled>开始学习</button>
       <span style="font-size:13px; color:var(--clr-text-muted); align-self:center;">词库已全部掌握，去测试模式巩固吧 →</span>
     {% else %}
-      {% if active_session and not completed_today %}
-      <a href="{{ url_for('learn_continue') }}" class="btn btn--ghost">继续上次学习</a>
+      {% if has_progress and not completed_today %}
+      <a href="{{ continue_url }}" class="btn btn--ghost">继续上次学习</a>
       {% endif %}
-      <a href="{{ url_for('learn_setup') }}" class="btn btn--primary btn--lg">开始学习</a>
+      <a href="{{ start_url }}" class="btn btn--primary btn--lg">开始学习</a>
     {% endif %}
 
     <a href="{{ url_for('test_setup') }}" class="btn btn--ghost">测试模式</a>
-    {% if stats.with_synonyms and stats.with_synonyms > 0 %}
-    <a href="{{ url_for('synonym_setup') }}" class="btn btn--ghost">同义词学习
-      <span style="font-size:11px; color:var(--clr-text-muted); margin-left:4px;">({{ stats.with_synonyms }})</span>
-    </a>
-    {% endif %}
     <a href="{{ url_for('library') }}" class="btn btn--ghost">词库管理</a>
   </div>
 

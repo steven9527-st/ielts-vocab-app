@@ -156,11 +156,13 @@ class TestTablePdfFullImport(unittest.TestCase):
                 self.assertEqual(w['chinese'], w['synonyms'],
                                  f'同义词模式下 chinese 应等于 synonyms: {dict(w)}')
 
-            # Step 7: 同义词学习入口可访问（首页统计 with_synonyms > 0）
+            # Step 7: 同义词词库导入后，首页「开始学习」按钮 SHALL 指向同义词学习入口
+            # （unify-learn-entry-by-list-type change：合并入口，按 type 智能分发）
             resp = client.get('/')
             self.assertEqual(resp.status_code, 200)
             body = resp.data.decode('utf-8')
-            self.assertIn('同义词学习', body, '首页应显示同义词学习入口')
+            self.assertIn('href="/learn/synonym/setup"', body,
+                          '同义词词库导入后，首页「开始学习」应指向同义词学习入口')
 
             # Step 8: 同义词学习 setup 页可正常访问
             resp = client.get('/learn/synonym/setup')
