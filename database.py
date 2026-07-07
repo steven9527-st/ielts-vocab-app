@@ -1,3 +1,4 @@
+import json
 import sqlite3
 
 from paths import db_path
@@ -92,6 +93,9 @@ def init_db():
     conn.commit()
     # 自动迁移既有词库：按 synonyms 字段填充率分类（仅对默认/未明确设置 type 的词库）
     _migrate_word_list_types(conn)
+    # 历史数据回补：同义词学习通关的词补标 mastered
+    # （修复 add-synonym-learn-quiz 未 UPDATE words.status 的历史 bug）
+    _migrate_synonym_mastered(conn)
     conn.close()
 
 
@@ -122,4 +126,46 @@ def _migrate_word_list_types(conn) -> None:
         ).fetchone()[0]
         if (with_syn / total) >= SYNONYM_THRESHOLD:
             conn.execute("UPDATE word_lists SET type='synonym' WHERE id=?", (list_id,))
+    conn.commit()
+
+
+def _migrate_synonym_mastered(conn) -> None:
+    """把同义词学习通关的历史词补标 mastered（幂等）。
+
+    背景：`add-synonym-learn-quiz` change 引入同义词学习流后，
+    通关时故意跳过了 `UPDATE words SET status='mastered'`，
+    导致这些词永远显示 unmastered，影响首页统计。
+    本迁移扫 study_log 里所有 `learn_synonym+accuracy=1.0` 记录，
+    把词标 mastered。
+
+    幂等保证：`WHERE status='unmastered'` 语义确保重复执行结果一致；
+    同时保护用户手动降级为 unmastered 的词……不：实际上这两个语义冲突，
+    最终选择"仅升级 unmastered → mastered"，接受"手动降级会被回补"的边缘代价
+    （代价可接受：用户可以再次手动降级；且此场景极少）。
+    """
+    try:
+        rows = conn.execute(
+            "SELECT word_ids FROM study_log "
+            "WHERE mode='learn_synonym' AND accuracy=1.0"
+        ).fetchall()
+    except Exception:
+        return  # 表可能还没创建（首次全新初始化场景）
+
+    all_wids = set()
+    for row in rows:
+        try:
+            wids = json.loads(row[0] or '[]')
+            for wid in wids:
+                all_wids.add(int(wid))
+        except Exception:
+            continue
+
+    if not all_wids:
+        return
+
+    for wid in all_wids:
+        conn.execute(
+            "UPDATE words SET status='mastered' WHERE id=? AND status='unmastered'",
+            (wid,)
+        )
     conn.commit()

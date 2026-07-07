@@ -429,6 +429,14 @@ input, button, select, textarea { font-family: inherit; font-size: inherit; }
   gap: var(--space-4);
   margin: var(--space-8) 0;
 }
+.metric-grid--4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+@media (max-width: 640px) {
+  .metric-grid--4 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
 .metric-card {
   background: var(--clr-white);
   border-radius: var(--radius-lg);
@@ -446,6 +454,7 @@ input, button, select, textarea { font-family: inherit; font-size: inherit; }
 .metric-card__number--blue  { color: var(--clr-blue); }
 .metric-card__number--pink  { color: var(--clr-pink); }
 .metric-card__number--red   { color: var(--clr-red); }
+.metric-card__number--gold  { color: #b8860b; }
 .metric-card__label {
   font-size: 13px;
   font-weight: 500;
@@ -492,6 +501,7 @@ input, button, select, textarea { font-family: inherit; font-size: inherit; }
 .badge--green { background: #e6f9f0; color: #0a7a40; }
 .badge--red   { background: #fff0ef; color: #cc2200; }
 .badge--pink  { background: #fce7f6; color: #b31570; }
+.badge--gold  { background: #fff8dc; color: #b8860b; }
 
 /* ─── Inputs ─── */
 .input {

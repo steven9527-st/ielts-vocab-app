@@ -30,7 +30,7 @@
   </div>
 
   <!-- Metric Cards -->
-  <div class="metric-grid">
+  <div class="metric-grid metric-grid--4">
     <div class="metric-card">
       <div class="metric-card__number">{{ stats.total }}</div>
       <div class="metric-card__label">词库总数</div>
@@ -40,27 +40,35 @@
       <div class="metric-card__label">已掌握</div>
     </div>
     <div class="metric-card">
+      <div class="metric-card__number metric-card__number--gold">{{ stats.fully_mastered }}</div>
+      <div class="metric-card__label">完全掌握</div>
+    </div>
+    <div class="metric-card">
       <div class="metric-card__number metric-card__number--blue">{{ stats.unmastered }}</div>
       <div class="metric-card__label">未掌握</div>
     </div>
   </div>
 
-  <!-- 进度条 -->
+  <!-- 进度条：mastered + fully_mastered 均视为已学过 -->
+  {% set learned = stats.mastered + stats.fully_mastered %}
   <div class="progress-wrap">
     <div class="progress-label">
       <span>学习进度</span>
-      <span>{% if stats.total > 0 %}{{ ((stats.mastered / stats.total) * 100) | int }}%{% else %}0%{% endif %}</span>
+      <span>{% if stats.total > 0 %}{{ ((learned / stats.total) * 100) | int }}%{% else %}0%{% endif %}</span>
     </div>
     <div class="progress-bar">
-      <div class="progress-bar__fill" style="width: {% if stats.total > 0 %}{{ ((stats.mastered / stats.total) * 100) | int }}{% else %}0{% endif %}%"></div>
+      <div class="progress-bar__fill" style="width: {% if stats.total > 0 %}{{ ((learned / stats.total) * 100) | int }}{% else %}0{% endif %}%"></div>
     </div>
   </div>
 
   <!-- 今日状态 -->
   <div class="divider"></div>
   {% if completed_today %}
-  <div style="text-align:center; font-size:18px; font-weight:600; color: var(--clr-red); margin-bottom: 24px;">
+  <div style="text-align:center; font-size:18px; font-weight:600; color: var(--clr-red); margin-bottom: 8px;">
     今日已通关 ✅
+  </div>
+  <div style="text-align:center; font-size:14px; color: var(--clr-text-secondary); margin-bottom: 24px;">
+    今日新增掌握 <strong style="color: var(--clr-text-primary);">{{ today_mastered }}</strong> 个
   </div>
   {% elif active_session or (current_list.type == 'synonym' and active_syn_session) %}
   <div style="text-align:center; margin-bottom: 24px;">

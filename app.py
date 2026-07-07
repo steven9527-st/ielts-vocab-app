@@ -247,17 +247,33 @@ def get_current_list_id():
 def get_list_stats(list_id):
     db = get_db()
     total = db.execute('SELECT COUNT(*) FROM words WHERE list_id=?', (list_id,)).fetchone()[0]
-    mastered = db.execute("SELECT COUNT(*) FROM words WHERE list_id=? AND status='mastered'", (list_id,)).fetchone()[0]
+    # mastered 口径：仅 status='mastered'（不含 fully_mastered），与 fully_mastered 分开计数
+    mastered = db.execute(
+        "SELECT COUNT(*) FROM words WHERE list_id=? AND status='mastered'", (list_id,)
+    ).fetchone()[0]
+    fully_mastered = db.execute(
+        "SELECT COUNT(*) FROM words WHERE list_id=? AND status='fully_mastered'", (list_id,)
+    ).fetchone()[0]
+    unmastered = db.execute(
+        "SELECT COUNT(*) FROM words WHERE list_id=? AND status='unmastered'", (list_id,)
+    ).fetchone()[0]
     with_syn = db.execute(
         "SELECT COUNT(*) FROM words WHERE list_id=? AND synonyms IS NOT NULL AND synonyms!=''",
+        (list_id,)
+    ).fetchone()[0]
+    unmastered_with_syn = db.execute(
+        "SELECT COUNT(*) FROM words WHERE list_id=? AND status='unmastered' "
+        "AND synonyms IS NOT NULL AND synonyms!=''",
         (list_id,)
     ).fetchone()[0]
     db.close()
     return {
         'total': total,
         'mastered': mastered,
-        'unmastered': total - mastered,
+        'fully_mastered': fully_mastered,
+        'unmastered': unmastered,
         'with_synonyms': with_syn,
+        'unmastered_with_synonyms': unmastered_with_syn,
     }
 
 
@@ -312,6 +328,67 @@ def today_completed(list_id):
     ).fetchone()
     db.close()
     return row is not None
+
+
+def _fetch_review_items(word_ids, list_id, list_type='standard'):
+    """按 word_ids 顺序，从 DB 拉取词的展示信息，供结果页展示"完全掌握"勾选列表。
+
+    返回：[{word_id, english, meaning}, ...]
+    meaning：standard → chinese；synonym → synonyms（若 synonyms 空则 fallback chinese）
+    """
+    if not word_ids:
+        return []
+    db = get_db()
+    placeholders = ','.join('?' * len(word_ids))
+    rows = db.execute(
+        f'SELECT id, english, chinese, synonyms FROM words WHERE id IN ({placeholders})',
+        list(word_ids)
+    ).fetchall()
+    db.close()
+
+    lookup = {r['id']: r for r in rows}
+    items = []
+    for wid in word_ids:
+        r = lookup.get(wid)
+        if not r:
+            continue
+        if list_type == 'synonym':
+            meaning = (r['synonyms'] or '').strip() or (r['chinese'] or '').strip()
+        else:
+            meaning = (r['chinese'] or '').strip()
+        items.append({
+            'word_id': r['id'],
+            'english': r['english'] or '',
+            'meaning': meaning,
+        })
+    return items
+
+
+def today_mastered_count(list_id):
+    """统计当前词库今日新增掌握的单词数（多会话合并去重）。
+
+    数据源：study_log 中当天 mode IN ('learn','learn_synonym') 且 accuracy=1.0 的记录，
+    合并 word_ids 后去重取长度。
+    """
+    if not list_id:
+        return 0
+    db = get_db()
+    rows = db.execute(
+        "SELECT word_ids FROM study_log "
+        "WHERE list_id=? AND date=? AND accuracy=1.0 AND mode IN ('learn','learn_synonym')",
+        (list_id, str(date.today()))
+    ).fetchall()
+    db.close()
+
+    unique = set()
+    for r in rows:
+        try:
+            ids = json.loads(r['word_ids'] or '[]')
+            for wid in ids:
+                unique.add(wid)
+        except Exception:
+            continue
+    return len(unique)
 
 
 def _get_list_type(list_id) -> str:
@@ -439,6 +516,7 @@ def index():
     # 同义词学习的进度存在 Flask session 的 syn_queue 中（非 DB），单独检测
     active_syn_session = bool(session.get('syn_queue'))
     completed_today = today_completed(list_id)
+    today_mastered = today_mastered_count(list_id) if completed_today else 0
 
     return render_template('index.html',
                            no_lists=False,
@@ -448,7 +526,8 @@ def index():
                            streak=streak,
                            active_session=active_session,
                            active_syn_session=active_syn_session,
-                           completed_today=completed_today)
+                           completed_today=completed_today,
+                           today_mastered=today_mastered)
 
 
 @app.route('/switch_list', methods=['POST'])
@@ -1120,6 +1199,9 @@ def learn_quiz():
     session['quiz_answers'] = {}
     session['quiz_mode'] = 'learn'
     session['quiz_max_reached'] = 1  # 进度峰值：从第 1 题开始
+    # 保存本次学习会话的原始 word_ids 全集，quiz_retry 不覆盖。
+    # 通关时用它计算 total、UPDATE mastered、写 study_log，避免"重做只剩错题子集"的 bug
+    session['quiz_original_word_ids'] = list(word_ids)
 
     # 消费一次性来源标记（保留 pending_quiz_return_to 让 submit 识别）
     session.pop('pending_quiz_word_ids', None)
@@ -1237,33 +1319,47 @@ def quiz_submit():
             # 通关处理
             list_id = get_current_list_id()
 
+            # 关键：原始学习会话的 word_ids 全集（不受 quiz_retry 覆盖影响）
+            # 优先用 session['quiz_original_word_ids']（learn_quiz 入口保存）
+            # 兜底用 quiz_data 的 word_ids（旧 session 兼容）
+            original_word_ids = session.get('quiz_original_word_ids') or list(word_ids)
+            original_total = len(original_word_ids)
+
             if is_synonym_flow:
-                # 同义词学习流：不操作 learn_session，不更新 words.status
-                # learn_synonym 记录已在跳测验前写过，这里补一条 quiz 记录对齐普通流
+                # 同义词学习流：不操作 learn_session（同义词流没这个）
+                # 但要 UPDATE words.status='mastered' 对齐普通流，让首页统计正确
                 try:
                     db = get_db()
+                    for wid in original_word_ids:
+                        db.execute("UPDATE words SET status='mastered' WHERE id=?", (wid,))
+                    # learn_synonym 记录已在跳测验前写过，这里补一条 quiz 记录对齐普通流
                     db.execute(
                         'INSERT INTO study_log (list_id, date, mode, word_ids, accuracy, duration_s) VALUES (?,?,?,?,?,?)',
-                        (list_id, str(date.today()), 'quiz', json.dumps(word_ids), 1.0, 0)
+                        (list_id, str(date.today()), 'quiz', json.dumps(original_word_ids), 1.0, 0)
                     )
                     db.commit()
                     db.close()
                 except Exception as e:
-                    print(f'[quiz_submit synonym_flow] study_log 写入失败: {e}')
+                    print(f'[quiz_submit synonym_flow] mastered/study_log 写入失败: {e}')
+
+                # 组装本次单词列表供结果页"完全掌握"勾选区
+                review_items = _fetch_review_items(original_word_ids, list_id, list_type='synonym')
 
                 session.pop('quiz_answers', None)
                 session.pop('quiz_max_reached', None)
                 session.pop('quiz_synonym_flow', None)
                 session.pop('pending_quiz_return_to', None)
+                session.pop('quiz_original_word_ids', None)
 
                 return render_template('quiz_result.html',
                                        mode='learn',
                                        passed=True,
-                                       correct=total,
-                                       total=total,
+                                       correct=original_total,
+                                       total=original_total,
                                        accuracy=100,
                                        wrong_items=[],
-                                       synonym_flow=True)
+                                       synonym_flow=True,
+                                       review_items=review_items)
 
             # 普通学习流通关
             sess_id = session.get('learn_session_id')
@@ -1271,12 +1367,21 @@ def quiz_submit():
 
             db = get_db()
             if sess_id:
-                ls = db.execute('SELECT created_at FROM learn_session WHERE id=?', (sess_id,)).fetchone()
+                ls = db.execute('SELECT * FROM learn_session WHERE id=?', (sess_id,)).fetchone()
                 if ls:
                     start_time = ls['created_at']
+                    # 更权威的原始全集：learn_session.word_ids（DB 写入后不变）
+                    try:
+                        db_original = json.loads(ls['word_ids'])
+                        if db_original:
+                            original_word_ids = db_original
+                            original_total = len(original_word_ids)
+                    except Exception:
+                        pass
                 db.execute("UPDATE learn_session SET status='done' WHERE id=?", (sess_id,))
-                for wid in word_ids:
-                    db.execute("UPDATE words SET status='mastered' WHERE id=?", (wid,))
+
+            for wid in original_word_ids:
+                db.execute("UPDATE words SET status='mastered' WHERE id=?", (wid,))
 
             # 计算用时
             duration = 0
@@ -1289,24 +1394,32 @@ def quiz_submit():
 
             db.execute(
                 'INSERT INTO study_log (list_id, date, mode, word_ids, accuracy, duration_s) VALUES (?,?,?,?,?,?)',
-                (list_id, str(date.today()), 'learn', json.dumps(word_ids), 1.0, duration)
+                (list_id, str(date.today()), 'learn', json.dumps(original_word_ids), 1.0, duration)
             )
             db.commit()
             db.close()
+
+            # 组装本次单词列表供结果页"完全掌握"勾选区
+            review_items = _fetch_review_items(
+                original_word_ids, list_id,
+                list_type=_get_list_type(list_id)
+            )
 
             session.pop('learn_session_id', None)
             session.pop('learn_total', None)
             session.pop('learn_max_reached', None)
             session.pop('quiz_answers', None)
             session.pop('quiz_max_reached', None)
+            session.pop('quiz_original_word_ids', None)
 
             return render_template('quiz_result.html',
                                    mode='learn',
                                    passed=True,
-                                   correct=total,
-                                   total=total,
+                                   correct=original_total,
+                                   total=original_total,
                                    accuracy=100,
-                                   wrong_items=[])
+                                   wrong_items=[],
+                                   review_items=review_items)
         else:
             return render_template('quiz_result.html',
                                    mode='learn',
@@ -1334,6 +1447,16 @@ def quiz_submit():
         score_label = '优秀 🎉' if accuracy >= 0.9 else ('良好 👍' if accuracy >= 0.7 else '加油 💪')
         test_count = session.get('test_count', total)
 
+        # 组装本次单词列表供结果页"完全掌握"勾选区
+        # 只展示答对的词（作为完全掌握候选），listening 用 chinese，文字用词库 type 决定
+        list_type = _get_list_type(list_id)
+        display_type = 'standard' if test_type == 'audio' else list_type
+        review_items = _fetch_review_items(word_ids, list_id, list_type=display_type)
+        # 附加每个词的答题结果
+        wrong_wids = {w['word_id'] for w in wrong_items}
+        for item in review_items:
+            item['is_correct'] = item['word_id'] not in wrong_wids
+
         session.pop('quiz_answers', None)
         session.pop('quiz_test_type', None)
         session.pop('quiz_max_reached', None)
@@ -1345,7 +1468,8 @@ def quiz_submit():
                                score_label=score_label,
                                wrong_items=wrong_items,
                                test_count=test_count,
-                               test_type=test_type)
+                               test_type=test_type,
+                               review_items=review_items)
 
 
 @app.route('/quiz/retry', methods=['POST'])
@@ -1391,8 +1515,13 @@ def test_setup():
     db.close()
     show_picker = (list_count >= 2) and (not session.get('list_picked'))
 
-    return render_template('test_setup.html', stats=stats, default_m=10,
-                           show_picker=show_picker)
+    # 已掌握词不足 4 个（干扰项池最低门槛）→ 引导页拦截
+    not_enough_mastered = stats['mastered'] < 4
+    default_m = min(10, stats['mastered']) if stats['mastered'] > 0 else 10
+
+    return render_template('test_setup.html', stats=stats, default_m=default_m,
+                           show_picker=show_picker,
+                           not_enough_mastered=not_enough_mastered)
 
 
 @app.route('/test/start', methods=['POST'])
@@ -1406,15 +1535,22 @@ def test_start():
         test_type = 'text'
 
     db = get_db()
-    total_count = db.execute('SELECT COUNT(*) FROM words WHERE list_id=?', (list_id,)).fetchone()[0]
+    mastered_count = db.execute(
+        "SELECT COUNT(*) FROM words WHERE list_id=? AND status='mastered'",
+        (list_id,)
+    ).fetchone()[0]
 
-    if total_count < 4:
+    if mastered_count < 4:
         db.close()
-        return render_template('quiz_error.html', message='词库单词数不足（至少需要 4 个词）')
+        return render_template(
+            'quiz_error.html',
+            message='当前词库已掌握词不足 4 个，请先去学习一些单词再来测试'
+        )
 
-    m = min(m, total_count)
+    m = min(m, mastered_count)
     words = db.execute(
-        'SELECT id FROM words WHERE list_id=? ORDER BY RANDOM() LIMIT ?',
+        "SELECT id FROM words WHERE list_id=? AND status='mastered' "
+        "ORDER BY RANDOM() LIMIT ?",
         (list_id, m)
     ).fetchall()
     db.close()
@@ -1532,7 +1668,9 @@ def synonym_setup():
     db.close()
     show_picker = (list_count >= 2) and (not session.get('list_picked'))
 
-    default_n = min(20, stats['with_synonyms']) if stats['with_synonyms'] > 0 else 0
+    # 学习范围只算"未掌握 + 含同义词"
+    available = stats['unmastered_with_synonyms']
+    default_n = min(20, available) if available > 0 else 0
     return render_template('learn_synonym_setup.html',
                            stats=stats,
                            default_n=default_n,
@@ -1548,7 +1686,8 @@ def synonym_start():
 
     db = get_db()
     rows = db.execute(
-        "SELECT id FROM words WHERE list_id=? AND synonyms IS NOT NULL AND synonyms!='' "
+        "SELECT id FROM words WHERE list_id=? AND status='unmastered' "
+        "AND synonyms IS NOT NULL AND synonyms!='' "
         "ORDER BY RANDOM() LIMIT ?",
         (list_id, n)
     ).fetchall()
@@ -1750,7 +1889,7 @@ def update_word(word_id):
         fields['pos'] = data['pos'].strip()
     if 'synonyms' in data:
         fields['synonyms'] = data['synonyms'].strip()
-    if 'status' in data and data['status'] in ('mastered', 'unmastered'):
+    if 'status' in data and data['status'] in ('mastered', 'unmastered', 'fully_mastered'):
         fields['status'] = data['status']
 
     if not fields:
@@ -1774,6 +1913,44 @@ def delete_word(word_id):
     db.commit()
     db.close()
     return jsonify({'ok': True})
+
+
+@app.route('/mastery/promote', methods=['POST'])
+def mastery_promote():
+    """把一批词的 status 从 'mastered' 升级为 'fully_mastered'。
+
+    请求体：{"word_ids": [1, 2, 3, ...]}
+    仅当词当前 status='mastered' 时才升级；其它状态保持不变。
+    """
+    data = request.get_json(silent=True) or {}
+    word_ids = data.get('word_ids') or []
+
+    if not isinstance(word_ids, list):
+        return jsonify({'error': 'word_ids 必须是数组'}), 400
+
+    # 过滤出合法的整数 id
+    valid_ids = []
+    for wid in word_ids:
+        try:
+            valid_ids.append(int(wid))
+        except (TypeError, ValueError):
+            continue
+
+    if not valid_ids:
+        return jsonify({'ok': True, 'promoted': 0})
+
+    db = get_db()
+    promoted = 0
+    for wid in valid_ids:
+        cursor = db.execute(
+            "UPDATE words SET status='fully_mastered' WHERE id=? AND status='mastered'",
+            (wid,)
+        )
+        promoted += cursor.rowcount
+    db.commit()
+    db.close()
+
+    return jsonify({'ok': True, 'promoted': promoted})
 
 
 @app.route('/api/list/<int:list_id>', methods=['DELETE'])

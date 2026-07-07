@@ -1,7 +1,9 @@
-# Spec: word-list-management
+# word-list-management Specification
 
+## Purpose
+词库管理 capability：负责词库切换、学习/测试中的词库切换保护、单词状态管理、以及关联的 UI 组件。
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: 词库切换组件全站可见
 
@@ -98,3 +100,102 @@
 - **THEN** 浏览器 SHALL 跳转到 `/import` 页面
 - **AND** 用户完成 PDF 导入并确认后，新词库 SHALL 自动设为当前词库
 - **AND** `session['list_picked']` SHALL 被设为 True（防止后续学习/测试再次弹浮层）
+
+### Requirement: 测试模式只从已掌握词中选取
+
+测试模式（`test_start`，含文字测试和听力测试）SHALL 只从当前词库中「已掌握（`status='mastered'`）」的词里随机抽题，让测试专注于验证/巩固既有记忆。
+
+#### Scenario: 只测已掌握词
+
+- **GIVEN** 词库有 30 个词，其中 12 个 mastered / 18 个 unmastered
+- **AND** 用户在测试 setup 页选择"测 10 题"
+- **WHEN** `test_start` 执行
+- **THEN** 系统 SHALL 只从 12 个 mastered 词中随机抽 10 个作为题目
+- **AND** 10 个题目对应的 word_id 全部对应 `status='mastered'` 的词
+
+#### Scenario: 已掌握词不足 4 个时拦截
+
+- **GIVEN** 词库总 30 词，但 mastered 只有 3 个
+- **WHEN** 用户访问 `test_setup`
+- **THEN** setup 页 SHALL 显示引导文案「当前词库已掌握词不足 4 个，请先去学习一些单词再来测试」
+- **AND** SHALL 提供"返回首页"或"去学习"按钮
+- **AND** 不显示题数输入和"开始测试"按钮
+
+#### Scenario: 干扰项来自全词库不变
+
+- **GIVEN** 测试题目本身从 mastered 池选取
+- **WHEN** `generate_quiz_questions` 生成题目的 4 选 1
+- **THEN** 干扰项 SHALL 仍从全词库随机选取（保留既有行为）
+- **AND** 不受 status 限制，保证选项池充足
+
+### Requirement: get_list_stats 补充"未掌握且含同义词"字段
+
+`get_list_stats(list_id)` 返回值 SHALL 新增字段 `unmastered_with_synonyms`（`status='unmastered' AND synonyms 非空` 的词数），供同义词学习 setup 页作为题数上限和文案数据源。
+
+#### Scenario: 新字段计算
+
+- **GIVEN** 词库有 100 个词
+  - 其中 60 个 mastered
+  - 40 个 unmastered
+  - 60 个含 synonyms（其中 40 个 mastered、20 个 unmastered）
+- **WHEN** 调用 `get_list_stats(list_id)`
+- **THEN** 返回 dict SHALL 包含
+  - `total: 100`
+  - `mastered: 60`
+  - `unmastered: 40`
+  - `with_synonyms: 60`
+  - `unmastered_with_synonyms: 20`（新增字段）
+
+### Requirement: get_list_stats 补充 fully_mastered 字段
+
+`get_list_stats(list_id)` 返回值 SHALL 新增字段 `fully_mastered`，并明确 `mastered` 字段口径为**仅 status='mastered'（不含 fully_mastered）**。
+
+#### Scenario: 三态计数正确
+
+- **GIVEN** 词库有 100 词：50 unmastered / 30 mastered / 20 fully_mastered
+- **WHEN** 调用 `get_list_stats(list_id)`
+- **THEN** 返回 SHALL 包含
+  - `total: 100`
+  - `unmastered: 50`
+  - `mastered: 30`（**不含 fully_mastered**）
+  - `fully_mastered: 20`
+- **AND** `unmastered + mastered + fully_mastered == total`
+
+### Requirement: 首页 metric 卡片新增「完全掌握」
+
+首页 `index.html` metric 区 SHALL 展示 4 张卡片：`[词库总数] [已掌握 X] [完全掌握 Y] [未掌握 Z]`。
+
+#### Scenario: 4 卡片展示
+
+- **GIVEN** 当前词库统计 stats={total:100, mastered:30, fully_mastered:20, unmastered:50}
+- **WHEN** 首页渲染
+- **THEN** 页面 SHALL 展示：
+  - "词库总数 100"
+  - "已掌握 30"（不再含 fully_mastered）
+  - "完全掌握 20"（新增）
+  - "未掌握 50"
+
+### Requirement: 词库管理页支持三态徽章循环切换
+
+`library.html` 中每行单词的 status 徽章 SHALL 支持点击循环切换：`未掌握 → 已掌握 → 完全掌握 → 未掌握`。
+
+三态样式区分：
+- 未掌握：蓝色（`badge--blue`）
+- 已掌握：绿色（`badge--green`）
+- 完全掌握：金色（`badge--gold` 或复用 orange 变量）
+
+`PATCH /library/word/<id>` API 的 `status` 白名单 SHALL 扩展为 `('unmastered', 'mastered', 'fully_mastered')`。
+
+#### Scenario: 徽章循环切换
+
+- **GIVEN** 某词当前 status='unmastered'
+- **WHEN** 用户点击徽章 3 次
+- **THEN** 徽章依次显示"已掌握 → 完全掌握 → 未掌握"
+- **AND** DB 中 status 依次为 `mastered → fully_mastered → unmastered`
+
+#### Scenario: PATCH API 接受新状态
+
+- **GIVEN** POST `/library/word/123` with `{"status": "fully_mastered"}`
+- **WHEN** 后端处理
+- **THEN** 系统 SHALL UPDATE 该词 status='fully_mastered'
+- **AND** 返回成功响应

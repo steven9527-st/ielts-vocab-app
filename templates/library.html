@@ -58,12 +58,12 @@
             <span class="word-synonyms" style="font-size:13px; color:var(--clr-text-secondary);">{{ w.synonyms or '' }}</span>
           </td>
           <td>
-            <button class="badge {% if w.status == 'mastered' %}badge--green{% else %}badge--blue{% endif %} status-btn"
+            <button class="badge {% if w.status == 'fully_mastered' %}badge--gold{% elif w.status == 'mastered' %}badge--green{% else %}badge--blue{% endif %} status-btn"
                     style="cursor:pointer; border:none;"
                     data-id="{{ w.id }}"
                     data-status="{{ w.status }}"
-                    title="点击切换状态">
-              {{ '已掌握' if w.status == 'mastered' else '未掌握' }}
+                    title="点击循环切换：未掌握 → 已掌握 → 完全掌握">
+              {% if w.status == 'fully_mastered' %}完全掌握{% elif w.status == 'mastered' %}已掌握{% else %}未掌握{% endif %}
             </button>
           </td>
           <td>
@@ -125,12 +125,28 @@ function filterTable() {
   });
 }
 
-// 状态切换
+// 状态切换（三态循环：unmastered → mastered → fully_mastered → unmastered）
+const STATUS_CYCLE = {
+  'unmastered': 'mastered',
+  'mastered': 'fully_mastered',
+  'fully_mastered': 'unmastered'
+};
+const STATUS_LABEL = {
+  'unmastered': '未掌握',
+  'mastered': '已掌握',
+  'fully_mastered': '完全掌握'
+};
+const STATUS_CLASS = {
+  'unmastered': 'badge--blue',
+  'mastered': 'badge--green',
+  'fully_mastered': 'badge--gold'
+};
+
 document.querySelectorAll('.status-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
     const id = btn.dataset.id;
     const cur = btn.dataset.status;
-    const next = cur === 'mastered' ? 'unmastered' : 'mastered';
+    const next = STATUS_CYCLE[cur] || 'unmastered';
     const resp = await fetch(`/api/word/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -138,8 +154,8 @@ document.querySelectorAll('.status-btn').forEach(btn => {
     });
     if ((await resp.json()).ok) {
       btn.dataset.status = next;
-      btn.textContent = next === 'mastered' ? '已掌握' : '未掌握';
-      btn.className = `badge ${next === 'mastered' ? 'badge--green' : 'badge--blue'} status-btn`;
+      btn.textContent = STATUS_LABEL[next];
+      btn.className = `badge ${STATUS_CLASS[next]} status-btn`;
     }
   });
 });
