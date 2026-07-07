@@ -173,3 +173,51 @@ TBD - created by archiving change show-chinese-on-synonym-card. Update Purpose a
 - **WHEN** 访问 `synonym_card` 或 `synonym_next`
 - **THEN** 系统 SHALL 按 `syn_total - len(syn_queue)` 推断当前位置写入 `syn_index`
 - **AND** 后续操作 SHALL 走游标模型，不再依赖 queue 头部
+
+### Requirement: 同义词学习通关时更新 mastered 状态
+
+同义词学习流（`add-synonym-learn-quiz` 引入）在通关（`quiz_submit` 的 `is_synonym_flow` 分支，accuracy=1.0）时 SHALL 对本次学习会话的全部原始词 ID 执行 `UPDATE words SET status='mastered'`，对齐普通学习流的行为。
+
+原始词 ID 来源：`session['quiz_original_word_ids']`（由 `learn_quiz` 进入同义词流时保存）。
+
+#### Scenario: 通关后首页统计正确
+
+- **GIVEN** 用户开始同义词学习 5 个词
+- **AND** 学完并测验通关（accuracy=100%）
+- **WHEN** 用户返回首页
+- **THEN** 首页「已掌握」metric SHALL 至少 +5（相对本次学习前）
+
+#### Scenario: 不通关不标 mastered
+
+- **GIVEN** 用户开始同义词学习 5 个词并进入测验
+- **AND** 测验准确率 < 100%（未通关）
+- **AND** 用户放弃测验（点「放弃测验」按钮）
+- **WHEN** 检查 `words.status`
+- **THEN** 这 5 个词的 status SHALL 保持 `unmastered`（未标 mastered）
+
+### Requirement: 同义词学习只从未掌握词中选取
+
+同义词学习流（`synonym_start`）SHALL 只从当前词库中「未掌握（`status='unmastered'`）且含同义词（`synonyms` 非空）」的词里随机抽取指定数量，避免用户重复学习已掌握的词。
+
+#### Scenario: 已掌握词不被抽中
+
+- **GIVEN** 词库有 20 个含同义词的词，其中 5 个已 mastered
+- **AND** 用户在同义词学习 setup 页选择"学 15 个"
+- **WHEN** `synonym_start` 执行选词
+- **THEN** 系统 SHALL 只从剩下 15 个未掌握词中抽取
+- **AND** 抽中的 15 个词 `status` 全部为 `unmastered`
+
+#### Scenario: 未掌握词不足时按实际数量选取
+
+- **GIVEN** 词库有 20 个含同义词的词，其中 18 个已 mastered
+- **AND** 用户请求学 15 个
+- **WHEN** `synonym_start` 执行选词
+- **THEN** 系统 SHALL 只抽出实际的 2 个未掌握词
+- **AND** 正常进入学习流程
+
+#### Scenario: 所有含同义词的词都已掌握时
+
+- **GIVEN** 词库所有含同义词的词都已掌握
+- **WHEN** 用户访问 `synonym_setup`
+- **THEN** setup 页 SHALL 展示引导文案（如「暂无可学的同义词单词，去测试模式复习吧」）
+- **AND** 不提供"开始学习"按钮
