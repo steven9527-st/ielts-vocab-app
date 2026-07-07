@@ -4,44 +4,63 @@
 {% block content %}
 <div class="container" style="padding-top:80px; padding-bottom:60px; max-width:480px;">
   <div class="page-title">测试模式</div>
-  <div class="page-subtitle">从全词库（{{ stats.total }} 个单词）随机出题</div>
 
-  <div class="card">
-    <form method="post" action="{{ url_for('test_start') }}" id="testForm">
-
-      <!-- 测试类型 -->
-      <label style="font-size:14px; font-weight:500; display:block; margin-bottom:10px; color:var(--clr-text-secondary); text-align:center;">
-        测试类型
-      </label>
-      <div class="test-type-group">
-        <label class="test-type-option test-type-option--selected" data-type="text">
-          <input type="radio" name="test_type" value="text" checked>
-          <span class="test-type-option__icon">📝</span>
-          <span class="test-type-option__label">文字测试</span>
-        </label>
-        <label class="test-type-option" data-type="audio">
-          <input type="radio" name="test_type" value="audio">
-          <span class="test-type-option__icon">🔊</span>
-          <span class="test-type-option__label">听力测试</span>
-        </label>
+  {% if not_enough_mastered %}
+    <!-- 引导页：已掌握词不足 4 个 -->
+    <div class="page-subtitle" style="margin-bottom:32px;">
+      当前词库已掌握词不足 4 个，请先去学习一些单词再来测试
+    </div>
+    <div class="card" style="text-align:center;">
+      <div style="font-size:48px; margin-bottom:16px;">📚</div>
+      <div style="font-size:14px; color:var(--clr-text-secondary); margin-bottom:24px;">
+        已掌握：<strong>{{ stats.mastered }}</strong> 个 · 未掌握：<strong>{{ stats.unmastered }}</strong> 个
       </div>
-
-      <!-- 题数 -->
-      <div style="text-align:center; margin-bottom:var(--space-8);">
-        <label style="font-size:14px; font-weight:500; display:block; margin-bottom:16px; color:var(--clr-text-secondary);">
-          测试题数
-        </label>
-        <input type="number" name="m" id="mInput" class="input input--number"
-               value="{{ default_m }}" min="1" max="{{ stats.total }}" required>
-        <div id="hint" style="font-size:12px; color:var(--clr-text-muted); margin-top:8px;"></div>
-      </div>
-
       <div class="action-row" style="justify-content:center;">
-        <a href="{{ url_for('index') }}" class="btn btn--ghost">取消</a>
-        <button type="submit" class="btn btn--primary btn--lg" id="startBtn">开始测试</button>
+        <a href="{{ url_for('index') }}" class="btn btn--ghost">返回首页</a>
+        <a href="{{ url_for('learn_setup') }}" class="btn btn--primary btn--lg">去学习</a>
       </div>
-    </form>
-  </div>
+    </div>
+
+  {% else %}
+    <div class="page-subtitle">从已掌握的 {{ stats.mastered }} 个单词中随机出题</div>
+
+    <div class="card">
+      <form method="post" action="{{ url_for('test_start') }}" id="testForm">
+
+        <!-- 测试类型 -->
+        <label style="font-size:14px; font-weight:500; display:block; margin-bottom:10px; color:var(--clr-text-secondary); text-align:center;">
+          测试类型
+        </label>
+        <div class="test-type-group">
+          <label class="test-type-option test-type-option--selected" data-type="text">
+            <input type="radio" name="test_type" value="text" checked>
+            <span class="test-type-option__icon">📝</span>
+            <span class="test-type-option__label">文字测试</span>
+          </label>
+          <label class="test-type-option" data-type="audio">
+            <input type="radio" name="test_type" value="audio">
+            <span class="test-type-option__icon">🔊</span>
+            <span class="test-type-option__label">听力测试</span>
+          </label>
+        </div>
+
+        <!-- 题数 -->
+        <div style="text-align:center; margin-bottom:var(--space-8);">
+          <label style="font-size:14px; font-weight:500; display:block; margin-bottom:16px; color:var(--clr-text-secondary);">
+            测试题数
+          </label>
+          <input type="number" name="m" id="mInput" class="input input--number"
+                 value="{{ default_m }}" min="1" max="{{ stats.mastered }}" required>
+          <div id="hint" style="font-size:12px; color:var(--clr-text-muted); margin-top:8px;"></div>
+        </div>
+
+        <div class="action-row" style="justify-content:center;">
+          <a href="{{ url_for('index') }}" class="btn btn--ghost">取消</a>
+          <button type="submit" class="btn btn--primary btn--lg" id="startBtn">开始测试</button>
+        </div>
+      </form>
+    </div>
+  {% endif %}
 </div>
 
 {% if show_picker %}
@@ -50,8 +69,9 @@
 {% endblock %}
 
 {% block scripts %}
+{% if not not_enough_mastered %}
 <script>
-const max = {{ stats.total }};
+const max = {{ stats.mastered }};
 const input = document.getElementById('mInput');
 const hint = document.getElementById('hint');
 const btn = document.getElementById('startBtn');
@@ -85,4 +105,5 @@ document.querySelectorAll('.test-type-option').forEach(function(opt) {
   });
 });
 </script>
+{% endif %}
 {% endblock %}

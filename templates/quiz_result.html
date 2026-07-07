@@ -20,6 +20,9 @@
       <a href="{{ url_for('index') }}" class="btn btn--primary btn--lg">返回首页</a>
     {% endif %}
 
+    {# 完全掌握勾选区 #}
+    {% include '_promote_section.html' %}
+
   {% else %}
     <div class="result-score result-score--fail">{{ accuracy }}%</div>
     <div class="result-label">{{ correct }} / {{ total }} 题正确</div>
