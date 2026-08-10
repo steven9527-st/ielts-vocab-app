@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 from flask import (Flask, jsonify, redirect, render_template, request,
                    send_file, session, url_for)
 
-from database import get_db, init_db
+from database import collapse_whitespace, get_db, init_db
 from excel_parser import (apply_mapping, guess_columns, parse_table_raw)
 from paths import is_frozen, resource_dir, tmp_parse_dir
 from pdf_parser import parse_pdf, has_text_layer, extract_pdf_tables
@@ -445,14 +445,15 @@ def generate_quiz_questions(word_ids, list_id, list_type='standard'):
 
         if list_type == 'synonym':
             # 英文同义词选项：正确答案 = 当前词 synonyms；干扰项 = 其他词的 synonyms
-            correct_syn = (correct.get('synonyms') or '').strip()
+            # 折叠空白（含存量数据可能残留的 \n）：防止浏览器 CRLF 规范化导致比较失败
+            correct_syn = collapse_whitespace(correct.get('synonyms') or '')
             if not correct_syn:
                 # 当前词没有同义词，跳过此题（学习路径会保证全有 synonyms，但 test 模式可能从全词库随机选到无 syn 的词）
                 continue
             distractor_pool = [
-                (w.get('synonyms') or '').strip()
+                collapse_whitespace(w.get('synonyms') or '')
                 for w in all_words
-                if w['id'] != wid and (w.get('synonyms') or '').strip() and (w.get('synonyms') or '').strip() != correct_syn
+                if w['id'] != wid and collapse_whitespace(w.get('synonyms') or '') and collapse_whitespace(w.get('synonyms') or '') != correct_syn
             ]
             # 去重（避免不同词有相同 synonyms 时干扰项重复）
             distractor_pool = list(dict.fromkeys(distractor_pool))
@@ -460,12 +461,12 @@ def generate_quiz_questions(word_ids, list_id, list_type='standard'):
                 # 干扰项不足，本题降级为中文选项
                 others = [w for w in all_words if w['id'] != wid]
                 distractors = random.sample(others, min(3, len(others)))
-                options = [correct['chinese']] + [d['chinese'] for d in distractors]
+                options = [collapse_whitespace(correct['chinese'])] + [collapse_whitespace(d['chinese']) for d in distractors]
                 random.shuffle(options)
                 questions.append({
                     'word_id': wid,
                     'english': correct['english'],
-                    'correct': correct['chinese'],
+                    'correct': collapse_whitespace(correct['chinese']),
                     'options': options,
                 })
                 continue
@@ -483,12 +484,12 @@ def generate_quiz_questions(word_ids, list_id, list_type='standard'):
         # 标准模式：原中文选项逻辑
         others = [w for w in all_words if w['id'] != wid]
         distractors = random.sample(others, min(3, len(others)))
-        options = [correct['chinese']] + [d['chinese'] for d in distractors]
+        options = [collapse_whitespace(correct['chinese'])] + [collapse_whitespace(d['chinese']) for d in distractors]
         random.shuffle(options)
         questions.append({
             'word_id': wid,
             'english': correct['english'],
-            'correct': correct['chinese'],
+            'correct': collapse_whitespace(correct['chinese']),
             'options': options
         })
 
@@ -1295,7 +1296,10 @@ def quiz_submit():
 
     for i, q in enumerate(questions):
         user_ans = answers.get(str(i), '')
-        is_correct = (user_ans == q['correct'])
+        # 归一化比较：折叠所有空白（含 \r\n / \n）。
+        # 浏览器表单提交按 HTML 标准把裸 LF 规范化为 CRLF，
+        # 若词库数据含 \n（Excel 单元格内换行），精确比较会误判。
+        is_correct = (collapse_whitespace(user_ans) == collapse_whitespace(q['correct']))
         if is_correct:
             correct_count += 1
         else:

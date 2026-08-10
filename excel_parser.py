@@ -41,13 +41,21 @@ _CSV_ENCODINGS = ['utf-8-sig', 'utf-8', 'gbk']
 # 文件读取（统一返回 list[list[str]]）
 # ─────────────────────────────────────────
 
+_CELL_WS_RE = re.compile(r'\s+')
+
+
 def _normalize_cell(v) -> str:
-    """openpyxl 单元格可能是 None/int/float/datetime → 统一转 str"""
+    """openpyxl 单元格可能是 None/int/float/datetime → 统一转 str
+
+    换行/制表等连续空白折叠为单个空格：
+    防止单元格内换行（Alt+Enter）把 \\n 带进词库，
+    导致测验时浏览器 CRLF 规范化与服务端字符串不匹配而误判。
+    """
     if v is None:
         return ''
     if isinstance(v, float) and v.is_integer():
         return str(int(v))
-    return str(v).strip()
+    return _CELL_WS_RE.sub(' ', str(v)).strip()
 
 
 def _read_xlsx(filepath: str) -> list[list[str]]:

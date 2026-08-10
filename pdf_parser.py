@@ -40,7 +40,8 @@ def _clean_table_rows(raw_rows: list[list]) -> list[list[str]]:
     # 归一化：None → ''
     norm: list[list[str]] = []
     for r in raw_rows:
-        cells = [(c if c is not None else '').strip() for c in r]
+        # 单元格内换行/制表折叠为单空格（防止 \n 进词库导致测验误判）
+        cells = [re.sub(r'\s+', ' ', (c if c is not None else '')).strip() for c in r]
         # 整行全空跳过
         if not any(cells):
             continue
