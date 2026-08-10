@@ -13,7 +13,7 @@
           今日学习单词数
         </label>
         <input type="number" name="n" id="nInput" class="input input--number"
-               value="{{ default_n }}" min="1" max="{{ stats.unmastered }}" required>
+               value="{{ default_n }}" min="1" max="{{ stats.total }}" required>
         <div id="hint" style="font-size:12px; color:var(--clr-text-muted); margin-top:8px;"></div>
       </div>
 
@@ -32,7 +32,7 @@
 
 {% block scripts %}
 <script>
-const max = {{ stats.unmastered }};
+const max = {{ stats.total }};
 const input = document.getElementById('nInput');
 const hint = document.getElementById('hint');
 const btn = document.getElementById('startBtn');
@@ -40,7 +40,7 @@ const btn = document.getElementById('startBtn');
 function validate() {
   const v = parseInt(input.value) || 0;
   if (v > max) {
-    hint.textContent = `剩余仅 ${max} 个未掌握单词`;
+    hint.textContent = `词库共 ${max} 个单词`;
     input.value = max;
   } else if (v < 1) {
     hint.textContent = '至少选择 1 个单词';

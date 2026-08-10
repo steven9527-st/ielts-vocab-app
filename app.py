@@ -947,7 +947,10 @@ def learn_setup():
     db.close()
     show_picker = (list_count >= 2) and (not session.get('list_picked'))
 
-    return render_template('learn_setup.html', stats=stats, default_n=20,
+    # 即使全部掌握，也允许学习（回顾模式）
+    effective_count = max(stats['unmastered'], stats['total'])
+    default_n = min(20, effective_count) if effective_count > 0 else 0
+    return render_template('learn_setup.html', stats=stats, default_n=default_n,
                            show_picker=show_picker)
 
 
@@ -957,13 +960,31 @@ def learn_start():
     n = request.form.get('n', 20, type=int)
 
     db = get_db()
+    # 优先选未掌握词，不足时用全词库补齐（确保学习功能始终可用）
     unmastered = db.execute(
         "SELECT id FROM words WHERE list_id=? AND status='unmastered' ORDER BY RANDOM() LIMIT ?",
         (list_id, n)
     ).fetchall()
-    db.close()
 
     word_ids = [r['id'] for r in unmastered]
+    shortage = n - len(word_ids)
+    if shortage > 0:
+        # 补已掌握词，排除已选中的 unmastered
+        if word_ids:
+            placeholders = ','.join('?' * len(word_ids))
+            extra = db.execute(
+                f"SELECT id FROM words WHERE list_id=? AND id NOT IN ({placeholders}) "
+                f"ORDER BY RANDOM() LIMIT ?",
+                [list_id] + word_ids + [shortage]
+            ).fetchall()
+        else:
+            extra = db.execute(
+                "SELECT id FROM words WHERE list_id=? ORDER BY RANDOM() LIMIT ?",
+                (list_id, shortage)
+            ).fetchall()
+        word_ids.extend([r['id'] for r in extra])
+    db.close()
+
     if not word_ids:
         return redirect(url_for('index'))
 

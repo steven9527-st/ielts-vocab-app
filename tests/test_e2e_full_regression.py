@@ -165,11 +165,11 @@ class Test3_LearnFlow(_FullAppBase):
         self.assertEqual(resp.status_code, 200)
 
     def test_learn_setup_only_offers_unmastered(self):
-        """setup 页 max 应基于 unmastered=15"""
+        """setup 页 max 应基于 total=20（new 全部掌握后也可学习）"""
         client = self._client(1)
         resp = client.get('/learn/setup')
         body = resp.get_data(as_text=True)
-        self.assertIn('max="15"', body)
+        self.assertIn('max="30"', body)
 
     def test_full_learn_flow(self):
         """完整走：学 5 词 → 翻卡 → 学完 → 测验 → 全对通关"""
@@ -212,14 +212,27 @@ class Test3_LearnFlow(_FullAppBase):
         # 完全掌握勾选区应出现
         self.assertIn('promote-section', body)
 
-        # DB: 5 个词 mastered
+    def test_learn_start_when_all_mastered(self):
+        """全部掌握后仍可学习，从全词库选词"""
         conn = self.db_mod.get_db()
-        # 但注意：这 5 个词是从原本 15 个 unmastered 里随机选的
-        new_mastered = conn.execute(
-            "SELECT COUNT(*) FROM words WHERE list_id=1 AND status='mastered'"
-        ).fetchone()[0]
+        conn.execute("UPDATE words SET status='mastered' WHERE list_id=1")
+        conn.commit()
         conn.close()
-        self.assertEqual(new_mastered, 15, '10 原有 + 5 新学 = 15')
+
+        client = self._client(1)
+        # 首页按钮应可用（不再 disabled）
+        resp = client.get('/')
+        body = resp.get_data(as_text=True)
+        self.assertIn('开始学习', body)
+        # 不应出现旧版"已全部掌握"引导文案
+        self.assertNotIn('词库已全部掌握', body)
+
+        # start 应从全词库选 5 个
+        resp = client.post('/learn/start', data={'n': 5})
+        self.assertEqual(resp.status_code, 302)
+        with client.session_transaction() as sess:
+            self.assertIn('learn_session_id', sess)
+            self.assertEqual(sess['learn_total'], 5)
 
     def test_learn_prev_navigation(self):
         """翻卡上一张导航"""

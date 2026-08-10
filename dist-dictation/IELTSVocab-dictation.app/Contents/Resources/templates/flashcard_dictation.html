@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}默写翻卡{% endblock %}
+
+{% block content %}
+<div class="flashcard-wrap">
+
+  <!-- 顶部进度 -->
+  <div class="progress-top" style="width:100%; max-width:580px;">
+    <span class="progress-top__count">{{ current }} / {{ total }} · 默写模式</span>
+    <form method="post" action="{{ url_for('dictation_abandon') }}" onsubmit="return confirm('确定退出默写学习？')">
+      <button type="submit" class="btn btn--ghost" style="padding:4px 12px; font-size:12px;">退出</button>
+    </form>
+  </div>
+
+  <!-- 翻卡：正面中文 → 背面英文 -->
+  <div class="flashcard" id="card" tabindex="0">
+    <div class="flashcard__inner">
+      <div class="flashcard__front">
+        <div class="flashcard__meaning" style="padding: 20px;">
+          {% for line in (word.chinese or '').split(' | ') %}
+            {% if line.strip() %}
+            <div style="font-size:24px; font-weight:500; line-height:1.8; color:var(--clr-text-primary);">{{ line }}</div>
+            {% endif %}
+          {% endfor %}
+        </div>
+        <div class="flashcard__hint" style="margin-top:24px;">根据中文默写英文，点击翻面查看答案</div>
+      </div>
+      <div class="flashcard__back">
+        <div class="flashcard__word">
+          {{ word.english | lower }}
+          <button type="button" class="btn-tts" id="ttsBtn"
+                  data-text="{{ word.english }}"
+                  title="点击朗读"
+                  aria-label="朗读单词">🔊</button>
+        </div>
+        {% if word.phonetic %}
+        <div class="flashcard__phonetic flashcard__phonetic--front">
+          {{ word.phonetic }}
+        </div>
+        {% endif %}
+        {% if word.pos %}
+        <div style="font-size:14px; color:var(--clr-text-muted); margin-top:8px;">{{ word.pos }}</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- 导航按钮区 -->
+  <div class="flashcard-nav" style="margin-top:32px; display:flex; gap:12px; justify-content:center; align-items:center;">
+    <form method="post" action="{{ url_for('dictation_prev') }}" id="prevForm">
+      <button type="submit" class="btn btn--ghost btn--lg" id="prevBtn"
+              {% if not prev_available %}disabled aria-disabled="true"{% endif %}>
+        ← 上一张
+      </button>
+    </form>
+    <div id="nextWrap" style="display:none;">
+      <form method="post" action="{{ url_for('dictation_next') }}">
+        <button type="submit" class="btn btn--primary btn--lg">
+          下一张 →
+        </button>
+      </form>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const card = document.getElementById('card');
+const nextWrap = document.getElementById('nextWrap');
+const prevForm = document.getElementById('prevForm');
+const prevBtn = document.getElementById('prevBtn');
+const hintEl = card.querySelector('.flashcard__hint');
+const prevAvailable = {{ 'true' if prev_available else 'false' }};
+let isBack = false;
+let everFlipped = false;
+
+function flip() {
+  isBack = !isBack;
+  card.classList.toggle('flipped', isBack);
+
+  if (!everFlipped && isBack) {
+    everFlipped = true;
+    nextWrap.style.display = 'block';
+  }
+
+  if (hintEl) {
+    hintEl.textContent = isBack ? '点击返回中文' : '根据中文默写英文，点击翻面查看答案';
+  }
+}
+
+card.addEventListener('click', flip);
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); flip(); }
+  if (e.code === 'ArrowRight' && everFlipped) {
+    nextWrap.querySelector('form').submit();
+  }
+  if (e.code === 'ArrowLeft' && prevAvailable) {
+    e.preventDefault();
+    prevForm.submit();
+  }
+});
+
+// 🔊 发音按钮
+document.querySelectorAll('.btn-tts').forEach(function(btn) {
+  btn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (typeof window.speakWord === 'function') {
+      window.speakWord(btn.dataset.text || '');
+    }
+  });
+});
+</script>
+{% endblock %}

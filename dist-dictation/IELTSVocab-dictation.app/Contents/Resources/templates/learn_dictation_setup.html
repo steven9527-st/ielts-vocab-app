@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}默写设置{% endblock %}
+
+{% block content %}
+<div class="container" style="padding-top:80px; padding-bottom:60px; max-width:480px;">
+  <div class="page-title">默写学习</div>
+  <div class="page-subtitle">看中文释义，默写英文单词 · 当前未掌握：{{ stats.unmastered }} 个单词</div>
+
+  <div class="card">
+    <form method="post" action="{{ url_for('dictation_start') }}" id="setupForm">
+      <div style="text-align:center; margin-bottom:var(--space-8);">
+        <label style="font-size:14px; font-weight:500; display:block; margin-bottom:16px; color:var(--clr-text-secondary);">
+          本次默写单词数
+        </label>
+        <input type="number" name="n" id="nInput" class="input input--number"
+               value="{{ default_n }}" min="1" max="{{ stats.unmastered }}" required>
+        <div id="hint" style="font-size:12px; color:var(--clr-text-muted); margin-top:8px;"></div>
+      </div>
+
+      <div class="action-row" style="justify-content:center;">
+        <a href="{{ url_for('index') }}" class="btn btn--ghost">取消</a>
+        <button type="submit" class="btn btn--primary btn--lg" id="startBtn">开始默写</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if show_picker %}
+  {% include '_list_picker.html' %}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const max = {{ stats.unmastered }};
+const input = document.getElementById('nInput');
+const hint = document.getElementById('hint');
+const btn = document.getElementById('startBtn');
+
+function validate() {
+  const v = parseInt(input.value) || 0;
+  if (v > max) {
+    hint.textContent = `剩余仅 ${max} 个未掌握单词`;
+    input.value = max;
+  } else if (v < 1) {
+    hint.textContent = '至少选择 1 个单词';
+    btn.disabled = true;
+    return;
+  } else {
+    hint.textContent = '';
+  }
+  btn.disabled = false;
+}
+
+input.addEventListener('input', validate);
+validate();
+</script>
+{% endblock %}

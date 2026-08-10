@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}预览校对{% endblock %}
+
+{% block content %}
+<div class="container" style="padding-top:40px; padding-bottom:60px;">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <div class="page-title">预览校对</div>
+      <div class="page-subtitle" id="summaryText">加载中...</div>
+    </div>
+    <div class="flex gap-3">
+      <button class="btn btn--ghost" id="ignoreFailed">批量忽略失败项</button>
+      <button class="btn btn--primary btn--lg" id="confirmBtn">确认导入</button>
+    </div>
+  </div>
+
+  <div style="margin-bottom:16px;">
+    <label style="font-size:14px; font-weight:500; display:block; margin-bottom:6px;">词库名称</label>
+    <input type="text" id="listName" class="input" style="max-width:360px;"
+           placeholder="{{ filename }}" value="{{ filename.replace('.pdf','') }}">
+  </div>
+
+  <div class="table-wrap">
+    <table id="previewTable">
+      <thead>
+        <tr>
+          <th style="width:50px;">#</th>
+          <th>英文</th>
+          <th style="width:100px;">音标</th>
+          <th style="width:60px;">词性</th>
+          <th>中文释义</th>
+          <th style="width:160px;">同义词</th>
+          <th style="width:80px;">状态</th>
+          <th style="width:60px;"></th>
+        </tr>
+      </thead>
+      <tbody id="tableBody">
+        {% for entry in entries %}
+        <tr class="{% if entry.failed %}row-failed{% elif entry.duplicate %}row-duplicate{% endif %}"
+            data-failed="{{ 'true' if entry.failed else 'false' }}"
+            data-duplicate="{{ 'true' if entry.duplicate else 'false' }}">
+          <td class="text-mono text-sm text-muted">{{ loop.index }}</td>
+          <td>
+            {% if entry.failed %}
+            <input type="text" class="input cell-english-edit" value="{{ entry.english }}"
+                   placeholder="请输入英文单词" style="width:100%; min-width:100px; font-size:13px;">
+            {% else %}
+            <span class="cell-english" contenteditable="{{ 'false' if entry.duplicate else 'true' }}"
+                  style="display:inline-block; min-width:80px; outline:none;">{{ entry.english }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if entry.failed %}
+            <input type="text" class="input cell-phonetic-edit" value=""
+                   placeholder="-" style="width:100%; min-width:70px; font-size:13px;">
+            {% else %}
+            <span class="cell-phonetic" contenteditable="{{ 'false' if entry.duplicate else 'true' }}"
+                  style="display:inline-block; min-width:70px; outline:none; color:var(--clr-gray-500);">{{ entry.phonetic or '' }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if entry.failed %}
+            <input type="text" class="input cell-pos-edit" value="" placeholder="-"
+                   style="width:100%; min-width:40px; font-size:13px;">
+            {% else %}
+            <span class="cell-pos" contenteditable="{{ 'false' if entry.duplicate else 'true' }}"
+                  style="display:inline-block; min-width:30px; outline:none;">{{ entry.pos or '' }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if entry.failed %}
+            <input type="text" class="input cell-chinese-edit" value="{{ entry.chinese }}"
+                   placeholder="请输入中文释义" style="width:100%; min-width:150px; font-size:13px;">
+            {% if entry.raw is defined %}
+            <span class="text-sm text-muted" style="display:block; margin-top:4px; font-size:11px; word-break:break-all;">原文: {{ entry.raw }}</span>
+            {% endif %}
+            {% else %}
+            <span class="cell-chinese" contenteditable="{{ 'false' if entry.duplicate else 'true' }}"
+                  style="display:inline-block; min-width:120px; outline:none;">{{ entry.chinese }}</span>
+            {% endif %}
+            {% if entry.failed %}
+              <span class="badge badge--pink" style="margin-left:8px;">解析失败 · 可手动填写</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if entry.failed %}
+            <input type="text" class="input cell-synonyms-edit" value=""
+                   placeholder="-" style="width:100%; min-width:120px; font-size:13px;">
+            {% else %}
+            <span class="cell-synonyms" contenteditable="{{ 'false' if entry.duplicate else 'true' }}"
+                  style="display:inline-block; min-width:120px; outline:none; color:var(--clr-gray-600); font-size:13px;">{{ entry.synonyms or '' }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if entry.duplicate %}
+              <span class="badge badge--gray">已存在，将跳过</span>
+            {% elif entry.failed %}
+              <span class="badge badge--pink">待填写</span>
+            {% else %}
+              <span class="badge badge--green">待导入</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if not entry.duplicate %}
+            <button class="btn btn--danger" style="padding:4px 10px; font-size:12px;"
+                    onclick="deleteRow(this)">删除</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div id="importStatus" style="margin-top:20px; font-size:14px;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function updateSummary() {
+  const rows = document.querySelectorAll('#tableBody tr');
+  let total = 0, failed = 0, dup = 0;
+  rows.forEach(r => {
+    total++;
+    if (r.dataset.failed === 'true') failed++;
+    if (r.dataset.duplicate === 'true') dup++;
+  });
+  const valid = total - failed - dup;
+  document.getElementById('summaryText').textContent =
+    `共 ${total} 条 · 待导入 ${valid} 条 · 解析失败 ${failed} 条 · 已存在 ${dup} 条`;
+}
+
+function deleteRow(btn) {
+  btn.closest('tr').remove();
+  updateSummary();
+}
+
+document.getElementById('ignoreFailed').addEventListener('click', () => {
+  document.querySelectorAll('#tableBody tr[data-failed="true"]').forEach(r => r.remove());
+  updateSummary();
+});
+
+document.getElementById('confirmBtn').addEventListener('click', async () => {
+  const rows = document.querySelectorAll('#tableBody tr');
+  const entries = [];
+  rows.forEach(r => {
+    if (r.dataset.duplicate === 'true') return;
+    // 支持 input 框（failed 条目）和 contenteditable（正常条目）两种方式
+    const enInput = r.querySelector('.cell-english-edit');
+    const zhInput = r.querySelector('.cell-chinese-edit');
+    const phInput = r.querySelector('.cell-phonetic-edit');
+    const posInput = r.querySelector('.cell-pos-edit');
+    const synInput = r.querySelector('.cell-synonyms-edit');
+    const english = enInput ? enInput.value.trim() : (r.querySelector('.cell-english')?.textContent.trim() || '');
+    const chinese = zhInput ? zhInput.value.trim() : (r.querySelector('.cell-chinese')?.textContent.trim() || '');
+    const phonetic = phInput ? phInput.value.trim() : (r.querySelector('.cell-phonetic')?.textContent.trim() || '');
+    const pos = posInput ? posInput.value.trim() : (r.querySelector('.cell-pos')?.textContent.trim() || '');
+    const synonyms = synInput ? synInput.value.trim() : (r.querySelector('.cell-synonyms')?.textContent.trim() || '');
+    if (english && chinese) {
+      entries.push({ english, chinese, phonetic, pos, synonyms });
+    }
+  });
+
+  if (!entries.length) {
+    document.getElementById('importStatus').textContent = '⚠️ 没有可导入的词条';
+    return;
+  }
+
+  const listName = document.getElementById('listName').value.trim() || '词库';
+  const btn = document.getElementById('confirmBtn');
+  btn.disabled = true;
+  btn.textContent = '导入中...';
+
+  const resp = await fetch('/import/confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entries, list_name: listName })
+  });
+  const data = await resp.json();
+  if (data.success) {
+    document.getElementById('importStatus').textContent = `✓ 成功导入 ${data.count} 个单词，正在跳转...`;
+    setTimeout(() => window.location.href = '/', 800);
+  } else {
+    document.getElementById('importStatus').textContent = '❌ ' + (data.error || '导入失败');
+    btn.disabled = false;
+    btn.textContent = '确认导入';
+  }
+});
+
+updateSummary();
+</script>
+{% endblock %}

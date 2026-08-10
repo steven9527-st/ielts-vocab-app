@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}导入词库{% endblock %}
+
+{% block content %}
+<div class="container" style="padding-top:60px; padding-bottom:60px;">
+  <div class="page-title">导入词库</div>
+  <div class="page-subtitle">支持 PDF 词表 / Excel (.xlsx) / CSV 文件</div>
+
+  <div class="card" style="max-width:480px;">
+    <form id="importForm">
+      <div style="margin-bottom: var(--space-6);">
+        <label style="font-size:14px; font-weight:500; display:block; margin-bottom:8px;">选择文件</label>
+        <input type="file" id="pdfInput" accept=".pdf,.xlsx,.csv" class="input" required>
+        <div style="font-size:12px; color:var(--clr-text-muted); margin-top:8px; line-height:1.7;">
+          PDF：「序号. 单词 英[音标] 词性+释义」编号词表 / 双列表格（含同义词词库）<br>
+          Excel/CSV：任意列结构，下一步选择列含义<br>
+          <span style="color:var(--clr-text-muted);">
+            ⚠ 若是扫描图 PDF（无法选中文字），请先用 WPS / Adobe 转换为可选中文字的 PDF
+          </span>
+        </div>
+      </div>
+      <button type="submit" class="btn btn--primary btn--full btn--lg" id="parseBtn">
+        解析文件
+      </button>
+    </form>
+
+    <div id="parseStatus" style="margin-top:16px; font-size:13px; color:var(--clr-text-muted);"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('importForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const file = document.getElementById('pdfInput').files[0];
+  if (!file) return;
+
+  // 前端再校验一次扩展名（防御 accept 被绕过）
+  const name = file.name.toLowerCase();
+  if (!(name.endsWith('.pdf') || name.endsWith('.xlsx') || name.endsWith('.csv'))) {
+    document.getElementById('parseStatus').textContent = '❌ 仅支持 .pdf / .xlsx / .csv';
+    return;
+  }
+
+  const btn = document.getElementById('parseBtn');
+  const status = document.getElementById('parseStatus');
+  btn.disabled = true;
+  btn.textContent = '解析中...';
+  status.textContent = '';
+
+  const fd = new FormData();
+  fd.append('pdf', file);  // 字段名沿用 'pdf'（后端按扩展名分发）
+
+  try {
+    const resp = await fetch('/import/parse', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!resp.ok || data.error) {
+      status.textContent = '❌ ' + (data.error || '解析失败');
+      btn.disabled = false;
+      btn.textContent = '解析文件';
+      return;
+    }
+    const next = data.next || '/import/preview';
+    status.textContent = `✓ 读取完成（${data.count} 行），正在跳转...`;
+    window.location.href = next;
+  } catch (err) {
+    status.textContent = '❌ 解析失败，请重试';
+    btn.disabled = false;
+    btn.textContent = '解析文件';
+  }
+});
+</script>
+{% endblock %}

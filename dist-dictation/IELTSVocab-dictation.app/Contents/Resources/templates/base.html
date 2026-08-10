@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}雅思词汇{% endblock %} — 单词记忆</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav__inner">
+      <a href="{{ url_for('index') }}" class="nav__brand">单词记忆</a>
+      {% include '_list_switcher.html' %}
+      <div class="nav__links">
+        <a href="{{ url_for('index') }}" class="nav__link {% if request.endpoint == 'index' %}nav__link--active{% endif %}">首页</a>
+        <a href="{{ url_for('library') }}" class="nav__link {% if request.endpoint == 'library' %}nav__link--active{% endif %}">词库管理</a>
+        <a href="{{ url_for('settings') }}" class="nav__link {% if request.endpoint == 'settings' %}nav__link--active{% endif %}">设置</a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- TTS 不可用时的提示 Toast（默认隐藏，由 tts.js 在用户点击 🔊 且无英文音色时唤起） -->
+  <div id="ttsToast" class="tts-toast" hidden role="alertdialog" aria-modal="true" aria-labelledby="ttsToastTitle">
+    <div class="tts-toast__card">
+      <div class="tts-toast__title" id="ttsToastTitle">⚠ 无法发音</div>
+      <div class="tts-toast__body">
+        <p>当前系统未安装英文语音包，无法朗读。</p>
+        <p class="tts-toast__hint"><strong>Windows 安装步骤：</strong></p>
+        <ol class="tts-toast__steps">
+          <li>打开「设置」→「时间和语言」→「语言和区域」</li>
+          <li>点击「添加首选语言」→ 选择 <code>English (United States)</code></li>
+          <li>添加后点击该语言 →「选项」→ 下载「语音」</li>
+          <li>安装完成后重启浏览器即可</li>
+        </ol>
+        <p class="tts-toast__doc">
+          详细教程：
+          <a href="https://support.microsoft.com/zh-cn/windows/%E4%B8%BA-windows-%E4%B8%AD%E7%9A%84%E8%AE%B2%E8%BF%B0%E4%BA%BA%E4%B8%8B%E8%BD%BD%E8%AF%AD%E9%9F%B3-eeeebcca-2d18-714b-bb24-7c3acafa17a6"
+             target="_blank" rel="noopener noreferrer">微软官方支持文档 ↗</a>
+        </p>
+      </div>
+      <div class="tts-toast__actions">
+        <button type="button" class="btn btn--primary" id="ttsToastClose">我知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='tts.js') }}"></script>
+  {% if is_frozen %}
+  <!-- 心跳：仅打包模式启用，浏览器关闭后服务器 30 秒自杀 -->
+  <script>
+    (function() {
+      var HEARTBEAT_INTERVAL_MS = 10000;
+      function ping() {
+        try {
+          fetch('/api/heartbeat', { method: 'POST', keepalive: true }).catch(function() {});
+        } catch (e) { /* noop */ }
+      }
+      // 启动后立刻打一次，避免 10s 内服务器误判
+      ping();
+      setInterval(ping, HEARTBEAT_INTERVAL_MS);
+    })();
+  </script>
+  {% endif %}
+  {% block scripts %}{% endblock %}
+</body>
+</html>

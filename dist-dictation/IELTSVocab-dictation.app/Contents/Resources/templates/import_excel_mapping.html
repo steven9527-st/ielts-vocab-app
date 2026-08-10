@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+{% block title %}列映射{% endblock %}
+
+{% block content %}
+<div class="container" style="padding-top:40px; padding-bottom:60px;">
+  <div class="page-title">列映射</div>
+  <div class="page-subtitle">
+    <span class="text-mono">{{ filename }}</span> · 共 {{ total_rows }} 行 · 请确认列对应
+  </div>
+
+  <div class="card" style="max-width:920px;">
+
+    <!-- 列选择区 -->
+    <div style="display:flex; gap:var(--space-6); flex-wrap:wrap; margin-bottom:var(--space-6);">
+      <div>
+        <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">
+          英文列 <span style="color:#cc2200;">*</span>
+        </label>
+        <div class="select-wrap">
+          <select id="englishCol">
+            {% for label in col_labels %}
+            <option value="{{ loop.index0 }}"
+              {% if loop.index0 == guess.english_col %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div id="englishCol2Wrap" style="display:none;">
+        <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">
+          英文列 2
+          <span style="font-weight:400; color:var(--clr-text-muted); margin-left:4px; font-size:12px;">（同义词配对，可选）</span>
+        </label>
+        <div class="select-wrap">
+          <select id="englishCol2">
+            <option value="-1">— 未指定 —</option>
+            {% for label in col_labels %}
+            <option value="{{ loop.index0 }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label style="font-size:13px; font-weight:500; display:block; margin-bottom:6px;">
+          中文列 <span style="color:#cc2200;">*</span>
+        </label>
+        <div class="select-wrap">
+          <select id="chineseCol">
+            {% for label in col_labels %}
+            <option value="{{ loop.index0 }}"
+              {% if loop.index0 == guess.chinese_col %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div style="display:flex; align-items:flex-end;">
+        <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" id="skipFirstRow"
+            {% if guess.skip_first_row %}checked{% endif %}>
+          第一行是表头（跳过）
+        </label>
+      </div>
+    </div>
+
+    <!-- 导入模式开关 -->
+    <div style="margin-bottom:var(--space-6); padding:14px 16px; background:var(--clr-gray-50); border-radius:6px; border:1px solid var(--clr-border);">
+      <div style="font-size:13px; font-weight:500; margin-bottom:10px;">
+        导入模式
+        <span style="font-weight:400; color:var(--clr-text-muted); margin-left:6px;">已根据内容自动判断，可手动调整</span>
+      </div>
+      <div style="display:flex; gap:24px; flex-wrap:wrap;">
+        <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="radio" name="importMode" value="standard"
+            {% if guess.suggested_mode != 'synonym' %}checked{% endif %}>
+          <span><strong>标准模式</strong>：B 列是中文释义</span>
+        </label>
+        <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="radio" name="importMode" value="synonym"
+            {% if guess.suggested_mode == 'synonym' %}checked{% endif %}>
+          <span><strong>同义词模式</strong>：B 列是英文同义词，导入后可直接用同义词学习</span>
+        </label>
+        <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="radio" name="importMode" value="dictation">
+          <span><strong>默写模式</strong>：看中文默写英文，导入后可使用默写学习</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- 自动识别提示 -->
+    <div style="margin-bottom:var(--space-4); font-size:13px; line-height:1.8;">
+      {% if guess.phonetic_col >= 0 %}
+      <div style="color:#0a7a40;">✓ 自动识别到音标列：<strong>{{ guess.phonetic_label or col_labels[guess.phonetic_col] }}</strong></div>
+      {% else %}
+      <div class="text-muted">· 未识别到音标列（导入后音标字段为空）</div>
+      {% endif %}
+      {% if guess.pos_col >= 0 %}
+      <div style="color:#0a7a40;">✓ 自动识别到词性列：<strong>{{ guess.pos_label or col_labels[guess.pos_col] }}</strong></div>
+      {% else %}
+      <div class="text-muted">· 未识别到词性列（导入后词性字段为空）</div>
+      {% endif %}
+      {% if guess.synonym_col >= 0 %}
+      <div style="color:#0a7a40;">✓ 自动识别到同义词列：<strong>{{ guess.synonym_label or col_labels[guess.synonym_col] }}</strong></div>
+      {% else %}
+      <div class="text-muted">· 未识别到同义词列（同义词学习功能将不可用）</div>
+      {% endif %}
+    </div>
+
+    <!-- 预览表格 -->
+    <div style="margin-bottom:var(--space-4); font-size:13px; font-weight:500;">预览前 {{ preview_rows | length }} 行：</div>
+    <div class="table-wrap" style="margin-bottom:var(--space-6);">
+      <table id="previewTable">
+        <thead>
+          <tr>
+            <th style="width:36px;">#</th>
+            {% for label in col_labels %}
+            <th data-col="{{ loop.index0 }}">{{ label }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in preview_rows %}
+          <tr>
+            <td class="text-mono text-sm text-muted">{{ loop.index }}</td>
+            {% for cell in row %}
+            <td data-col="{{ loop.index0 }}" style="font-size:13px; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+              {{ cell }}
+            </td>
+            {% endfor %}
+            {# 末尾补齐空单元格 #}
+            {% for _ in range(n_cols - row | length) %}
+            <td data-col="{{ row | length + loop.index0 }}"></td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 操作按钮 -->
+    <div class="action-row" style="justify-content:flex-end;">
+      <a href="{{ url_for('import_page') }}" class="btn btn--ghost">取消</a>
+      <button type="button" class="btn btn--primary btn--lg" id="continueBtn">继续 →</button>
+    </div>
+
+    <div id="applyStatus" style="margin-top:12px; font-size:13px;"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const englishSel = document.getElementById('englishCol');
+const englishSel2 = document.getElementById('englishCol2');
+const englishSel2Wrap = document.getElementById('englishCol2Wrap');
+const chineseSel = document.getElementById('chineseCol');
+const skipFirstCb = document.getElementById('skipFirstRow');
+const continueBtn = document.getElementById('continueBtn');
+const status = document.getElementById('applyStatus');
+const modeRadios = document.querySelectorAll('input[name="importMode"]');
+
+const PHONETIC_COL = {{ guess.phonetic_col }};
+const POS_COL = {{ guess.pos_col }};
+const SYNONYM_COL = {{ guess.synonym_col }};
+
+const COLOR_EN = '#f0f7ff';     // 浅蓝 — 英文列
+const COLOR_EN2 = '#dbe7ff';    // 略深蓝 — 英文列 2（同义词配对）
+const COLOR_ZH = '#fdf2f7';     // 浅粉 — 中文列
+const COLOR_PHON = '#fef9e6';   // 浅黄 — 音标列
+const COLOR_POS = '#f0f9eb';    // 浅绿 — 词性列
+const COLOR_SYN = '#f3eaff';    // 浅紫 — 同义词列
+
+function highlightCol(ci, color) {
+  document.querySelectorAll(`#previewTable [data-col="${ci}"]`).forEach(el => {
+    el.style.background = color;
+  });
+}
+
+function getCurrentMode() {
+  const el = document.querySelector('input[name="importMode"]:checked');
+  return el ? el.value : 'standard';
+}
+
+function refreshHighlight() {
+  // 清除所有高亮
+  document.querySelectorAll('#previewTable [data-col]').forEach(el => {
+    el.style.background = '';
+  });
+  // 重新应用（顺序：音标/词性/同义词先，英中后；后者覆盖前者）
+  if (PHONETIC_COL >= 0) highlightCol(PHONETIC_COL, COLOR_PHON);
+  if (POS_COL >= 0) highlightCol(POS_COL, COLOR_POS);
+  if (SYNONYM_COL >= 0) highlightCol(SYNONYM_COL, COLOR_SYN);
+  highlightCol(parseInt(englishSel.value), COLOR_EN);
+  // 英文列 2 仅在同义词模式下高亮
+  if (getCurrentMode() === 'synonym') {
+    const en2 = parseInt(englishSel2.value);
+    if (en2 >= 0) highlightCol(en2, COLOR_EN2);
+  }
+  highlightCol(parseInt(chineseSel.value), COLOR_ZH);
+}
+
+function refreshModeUI() {
+  // 同义词模式时显示英文列 2，标准模式隐藏（保留已选值，便于切回）
+  englishSel2Wrap.style.display = (getCurrentMode() === 'synonym') ? '' : 'none';
+  refreshHighlight();
+}
+
+englishSel.addEventListener('change', refreshHighlight);
+englishSel2.addEventListener('change', refreshHighlight);
+chineseSel.addEventListener('change', refreshHighlight);
+modeRadios.forEach(r => r.addEventListener('change', refreshModeUI));
+refreshModeUI();
+
+continueBtn.addEventListener('click', async () => {
+  const en = parseInt(englishSel.value);
+  const zh = parseInt(chineseSel.value);
+  if (en === zh) {
+    status.textContent = '❌ 英文列和中文列不能相同';
+    status.style.color = '#cc2200';
+    return;
+  }
+
+  const importMode = getCurrentMode();
+  // 仅在同义词模式下读 english_col_2；标准模式始终传 -1
+  const en2 = (importMode === 'synonym') ? parseInt(englishSel2.value) : -1;
+  if (importMode === 'synonym' && en2 >= 0) {
+    if (en2 === en || en2 === zh) {
+      status.textContent = '❌ 英文列 2 不能与英文列 / 中文列相同';
+      status.style.color = '#cc2200';
+      return;
+    }
+  }
+
+  continueBtn.disabled = true;
+  continueBtn.textContent = '处理中...';
+  status.textContent = '';
+
+  try {
+    const resp = await fetch('/import/excel_apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        english_col: en,
+        chinese_col: zh,
+        phonetic_col: PHONETIC_COL,
+        pos_col: POS_COL,
+        synonym_col: SYNONYM_COL,
+        english_col_2: en2,
+        skip_first_row: skipFirstCb.checked,
+        import_mode: importMode,
+      })
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      status.textContent = '❌ ' + (data.error || '处理失败');
+      status.style.color = '#cc2200';
+      continueBtn.disabled = false;
+      continueBtn.textContent = '继续 →';
+      return;
+    }
+    status.textContent = `✓ 转换完成（${data.count} 条），跳转预览...`;
+    status.style.color = '#0a7a40';
+    window.location.href = data.next || '/import/preview';
+  } catch (err) {
+    status.textContent = '❌ 网络错误：' + err.message;
+    status.style.color = '#cc2200';
+    continueBtn.disabled = false;
+    continueBtn.textContent = '继续 →';
+  }
+});
+</script>
+{% endblock %}

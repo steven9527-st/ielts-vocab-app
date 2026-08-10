@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}设置{% endblock %}
+
+{% block content %}
+<div class="container" style="padding-top:40px; padding-bottom:60px; max-width:560px;">
+  <div class="page-title">设置</div>
+  <div class="page-subtitle">数据备份与恢复</div>
+
+  <div class="card" style="margin-bottom:var(--space-4);">
+    <div style="font-size:16px; font-weight:600; letter-spacing:-0.5px; margin-bottom:8px;">导出数据</div>
+    <div style="font-size:14px; color:var(--clr-text-secondary); margin-bottom:var(--space-4);">
+      将所有词库、单词和学习记录导出为 JSON 文件，用于备份或迁移到其他设备。
+    </div>
+    <a href="{{ url_for('export_data') }}" class="btn btn--ghost">导出数据 ↓</a>
+  </div>
+
+  <div class="card">
+    <div style="font-size:16px; font-weight:600; letter-spacing:-0.5px; margin-bottom:8px;">导入数据</div>
+    <div style="font-size:14px; color:var(--clr-text-secondary); margin-bottom:var(--space-4);">
+      从之前导出的 JSON 文件恢复数据。
+      <strong style="color:#cc2200;">注意：将覆盖当前所有数据，操作不可撤销。</strong>
+    </div>
+    <form id="importDataForm">
+      <div class="flex gap-3 items-center">
+        <input type="file" id="importFile" accept=".json" class="input" style="flex:1;">
+        <button type="submit" class="btn btn--danger">导入覆盖</button>
+      </div>
+    </form>
+    <div id="importStatus" style="margin-top:12px; font-size:13px;"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('importDataForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const file = document.getElementById('importFile').files[0];
+  if (!file) return;
+
+  if (!confirm('将覆盖当前所有数据，是否继续？此操作不可撤销。')) return;
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  const status = document.getElementById('importStatus');
+  status.textContent = '导入中...';
+
+  try {
+    const resp = await fetch('/api/import_data', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (data.ok) {
+      status.textContent = '✓ 导入成功，正在跳转...';
+      setTimeout(() => window.location.href = '/', 800);
+    } else {
+      status.textContent = '❌ ' + (data.error || '导入失败');
+    }
+  } catch (err) {
+    status.textContent = '❌ 导入失败，请重试';
+  }
+});
+</script>
+{% endblock %}

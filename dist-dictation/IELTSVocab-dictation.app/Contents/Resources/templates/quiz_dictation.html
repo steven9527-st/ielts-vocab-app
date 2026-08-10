@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}默写测验{% endblock %}
+
+{% block content %}
+<div class="quiz-wrap">
+
+  <!-- 顶部进度 -->
+  <div class="progress-top">
+    <span class="progress-top__count">{{ display_progress or current }} / {{ total }} · 默写测验</span>
+    <form method="post" action="{{ url_for('dictation_abandon') }}"
+          onsubmit="return confirm('确定放弃默写测验？')">
+      <button type="submit" class="btn btn--ghost" style="padding:4px 12px; font-size:12px;">放弃</button>
+    </form>
+  </div>
+
+  <!-- 题目：中文释义 -->
+  <div style="text-align:center; margin-bottom:var(--space-8);">
+    <div style="font-size:24px; font-weight:500; line-height:1.8; color:var(--clr-text-primary);">
+      {% for line in (question.chinese or '').split(' | ') %}
+        {% if line.strip() %}<div>{{ line }}</div>{% endif %}
+      {% endfor %}
+    </div>
+    <div style="font-size:13px; color:var(--clr-text-muted); margin-top:12px;">根据中文默写英文单词</div>
+  </div>
+
+  <!-- 默写输入区 -->
+  <form method="post" action="{{ url_for('quiz_answer') }}" id="quizForm">
+    <div style="max-width:400px; margin:0 auto;">
+      <input type="text" name="answer" id="answerInput"
+             class="input" style="font-size:20px; text-align:center; padding:14px; letter-spacing:1px;"
+             placeholder="输入英文单词..."
+             value="{{ preselected or '' }}"
+             autocomplete="off" autocapitalize="off" spellcheck="false"
+             autofocus>
+      <div style="text-align:center; margin-top:16px;">
+        <button type="submit" class="btn btn--primary btn--lg">下一题 →</button>
+      </div>
+    </div>
+  </form>
+
+  <!-- 上一题按钮 -->
+  <div class="quiz-nav" style="margin-top:24px; display:flex; justify-content:center;">
+    <form method="post" action="{{ url_for('quiz_prev') }}" id="prevForm">
+      <button type="submit" class="btn btn--ghost" id="prevBtn"
+              {% if not prev_available %}disabled aria-disabled="true"{% endif %}>
+        ← 上一题
+      </button>
+    </form>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const prevForm = document.getElementById('prevForm');
+const prevAvailable = {{ 'true' if prev_available else 'false' }};
+const answerInput = document.getElementById('answerInput');
+const quizForm = document.getElementById('quizForm');
+
+// Enter 提交（表单默认行为即可），← 回上一题
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'ArrowLeft' && prevAvailable) {
+    e.preventDefault();
+    prevForm.submit();
+  }
+});
+</script>
+{% endblock %}

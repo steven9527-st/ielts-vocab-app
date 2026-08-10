@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}{% if passed %}今日通关{% else %}批改结果{% endif %}{% endblock %}
+
+{% block content %}
+<div class="result-wrap">
+
+  {% if passed %}
+    <div class="result-score result-score--pass">100%</div>
+    <div class="result-label">今日通关 ✅</div>
+    <div style="font-size:16px; color:var(--clr-text-secondary); margin-bottom:var(--space-8);">
+      {% if synonym_flow %}
+        本次共测验了 {{ total }} 个同义词，全部答对
+      {% elif dictation_flow %}
+        本次共默写了 {{ total }} 个单词，全部答对
+      {% else %}
+        本次学习的 {{ total }} 个单词已全部标记为已掌握
+      {% endif %}
+    </div>
+    {% if synonym_flow %}
+      <a href="{{ url_for('synonym_done') }}" class="btn btn--primary btn--lg">完成本次学习</a>
+    {% elif dictation_flow %}
+      <a href="{{ url_for('dictation_done') }}" class="btn btn--primary btn--lg">完成本次默写</a>
+    {% else %}
+      <a href="{{ url_for('index') }}" class="btn btn--primary btn--lg">返回首页</a>
+    {% endif %}
+
+    {# 完全掌握勾选区 #}
+    {% include '_promote_section.html' %}
+
+  {% else %}
+    <div class="result-score result-score--fail">{{ accuracy }}%</div>
+    <div class="result-label">{{ correct }} / {{ total }} 题正确</div>
+
+    <div class="action-row" style="justify-content:center; margin-bottom:var(--space-8);">
+      <button class="btn btn--primary btn--lg" id="retryBtn">
+        还有 {{ wrong_items | length }} 题需要重做
+      </button>
+      {% if synonym_flow %}
+      <form method="post" action="{{ url_for('synonym_abandon') }}">
+        <button type="submit" class="btn btn--ghost"
+                onclick="return confirm('放弃后本次同义词学习的测验不再继续')">放弃测验</button>
+      </form>
+      {% elif dictation_flow %}
+      <form method="post" action="{{ url_for('dictation_abandon') }}">
+        <button type="submit" class="btn btn--ghost"
+                onclick="return confirm('放弃后本次默写学习的测验不再继续')">放弃测验</button>
+      </form>
+      {% else %}
+      <form method="post" action="{{ url_for('learn_abandon') }}">
+        <button type="submit" class="btn btn--ghost"
+                onclick="return confirm('放弃后本次单词不会标记为已掌握')">放弃今日</button>
+      </form>
+      {% endif %}
+    </div>
+
+    <!-- 错题列表 -->
+    <div class="wrong-list">
+      <div class="wrong-list__title">错题详情</div>
+      {% for item in wrong_items %}
+      <div class="wrong-item">
+        {% if dictation_flow %}
+        <div class="wrong-item__english">{{ item.correct_answer }}</div>
+        <div class="wrong-item__user">✗ 你的默写：{{ item.user_answer or '（未作答）' }}</div>
+        <div class="wrong-item__correct">✓ 正确拼写：{{ item.correct_answer }}</div>
+        {% else %}
+        <div class="wrong-item__english">{{ item.english | lower }}</div>
+        <div class="wrong-item__user">✗ 你的选择：{{ item.user_answer or '（未作答）' }}</div>
+        <div class="wrong-item__correct">✓ 正确答案：{{ item.correct_answer }}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if not passed %}
+<script>
+const wrongItems = {{ wrong_items | tojson }};
+document.getElementById('retryBtn').addEventListener('click', async () => {
+  const resp = await fetch('/quiz/retry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ wrong_items: wrongItems })
+  });
+  const data = await resp.json();
+  if (data.ok) window.location.href = '/quiz/question';
+});
+</script>
+{% endif %}
+{% endblock %}
