@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 
 from paths import db_path
@@ -96,6 +97,9 @@ def init_db():
     # 历史数据回补：同义词学习通关的词补标 mastered
     # （修复 add-synonym-learn-quiz 未 UPDATE words.status 的历史 bug）
     _migrate_synonym_mastered(conn)
+    # 存量数据清洗：words 文本字段中的换行符折叠为空格
+    # （修复浏览器 CRLF 规范化导致测验误判的 bug）
+    _migrate_strip_newlines(conn)
     conn.close()
 
 
@@ -167,5 +171,69 @@ def _migrate_synonym_mastered(conn) -> None:
         conn.execute(
             "UPDATE words SET status='mastered' WHERE id=? AND status='unmastered'",
             (wid,)
+        )
+    conn.commit()
+
+
+_WHITESPACE_RE = re.compile(r'\s+')
+
+
+def collapse_whitespace(s: str) -> str:
+    """把所有连续空白（含 \\n \\r \\t）折叠为单个空格并 strip 首尾。"""
+    if not s:
+        return s or ''
+    return _WHITESPACE_RE.sub(' ', s).strip()
+
+
+def _migrate_strip_newlines(conn) -> None:
+    """清洗 words 表文本字段中的换行/制表等空白（幂等）。
+
+    背景：Excel 单元格内换行（Alt+Enter）会把 \\n 带进 english/synonyms 字段。
+    浏览器表单提交时按 HTML 标准把裸 LF 规范化为 CRLF，
+    导致 quiz_submit 的字符串精确比较误判：
+    用户在结果页看到"你的选择"与"正确答案"显示完全一样（\\r\\n 与 \\n 渲染相同），
+    实际差一个 \\r 字符被判错。
+
+    处理：english/chinese/phonetic/pos/synonyms 五字段统一折叠空白。
+    冲突：清洗后 english 若与同 list_id 下另一行相同（UNIQUE(list_id, english)），
+    删除当前行（保留无换行的干净版本）；清洗后 english 为空的行直接删除。
+    """
+    fields = ('english', 'chinese', 'phonetic', 'pos', 'synonyms')
+    try:
+        rows = conn.execute(
+            "SELECT id, list_id, english, chinese, phonetic, pos, synonyms FROM words "
+            "WHERE english LIKE '%' || char(10) || '%' OR english LIKE '%' || char(13) || '%' "
+            "   OR chinese LIKE '%' || char(10) || '%' OR chinese LIKE '%' || char(13) || '%' "
+            "   OR phonetic LIKE '%' || char(10) || '%' OR phonetic LIKE '%' || char(13) || '%' "
+            "   OR pos LIKE '%' || char(10) || '%' OR pos LIKE '%' || char(13) || '%' "
+            "   OR synonyms LIKE '%' || char(10) || '%' OR synonyms LIKE '%' || char(13) || '%'"
+        ).fetchall()
+    except Exception:
+        return  # 表不存在等场景直接跳过
+
+    for row in rows:
+        cleaned = {f: collapse_whitespace(row[f]) for f in fields}
+        if cleaned['chinese'] == '':
+            cleaned['chinese'] = (row['chinese'] or '').strip() or cleaned['english']
+
+        new_eng = cleaned['english']
+        if not new_eng:
+            # 清洗后 english 为空 → 词条无意义，删除
+            conn.execute("DELETE FROM words WHERE id=?", (row['id'],))
+            continue
+
+        dup = conn.execute(
+            "SELECT id FROM words WHERE list_id=? AND english=? AND id != ?",
+            (row['list_id'], new_eng, row['id'])
+        ).fetchone()
+        if dup:
+            # 与现有干净版本唯一冲突 → 删除带换行的脏版本
+            conn.execute("DELETE FROM words WHERE id=?", (row['id'],))
+            continue
+
+        conn.execute(
+            "UPDATE words SET english=?, chinese=?, phonetic=?, pos=?, synonyms=? WHERE id=?",
+            (cleaned['english'], cleaned['chinese'], cleaned['phonetic'],
+             cleaned['pos'], cleaned['synonyms'], row['id'])
         )
     conn.commit()
