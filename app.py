@@ -392,7 +392,7 @@ def today_mastered_count(list_id):
 
 
 def _get_list_type(list_id) -> str:
-    """读取词库 type（'standard' / 'synonym'）；找不到则返回 'standard' 兜底。"""
+    """读取词库 type（'standard' / 'synonym' / 'dictation'）；找不到则返回 'standard' 兜底。"""
     if not list_id:
         return 'standard'
     db = get_db()
@@ -401,7 +401,7 @@ def _get_list_type(list_id) -> str:
     if not row:
         return 'standard'
     val = row['type'] if 'type' in row.keys() else None
-    return val if val in ('standard', 'synonym') else 'standard'
+    return val if val in ('standard', 'synonym', 'dictation') else 'standard'
 
 
 def generate_quiz_questions(word_ids, list_id, list_type='standard'):
@@ -493,6 +493,36 @@ def generate_quiz_questions(word_ids, list_id, list_type='standard'):
         })
 
     return questions
+
+
+def generate_dictation_quiz_questions(word_ids, list_id):
+    """为默写词库生成填空测验题目：给中文，写英文。
+
+    返回 [{'word_id': int, 'chinese': str, 'correct': str(english)}, ...]
+    与选择题不同，没有 options 字段。
+    """
+    if not word_ids:
+        return None
+    db = get_db()
+    placeholders = ','.join('?' * len(word_ids))
+    rows = db.execute(
+        f'SELECT id, english, chinese FROM words WHERE id IN ({placeholders})',
+        list(word_ids)
+    ).fetchall()
+    db.close()
+
+    lookup = {r['id']: r for r in rows}
+    questions = []
+    for wid in word_ids:
+        r = lookup.get(wid)
+        if not r:
+            continue
+        questions.append({
+            'word_id': r['id'],
+            'chinese': r['chinese'] or '',
+            'correct': r['english'] or '',
+        })
+    return questions if questions else None
 
 
 # ─────────────────────────────────────────
@@ -797,7 +827,7 @@ def import_excel_apply():
     english_col_2 = data.get('english_col_2', -1)
     skip_first_row = bool(data.get('skip_first_row', True))
     import_mode = data.get('import_mode', 'standard')
-    if import_mode not in ('standard', 'synonym'):
+    if import_mode not in ('standard', 'synonym', 'dictation'):
         import_mode = 'standard'
 
     try:
@@ -892,7 +922,12 @@ def import_confirm():
     db = get_db()
     # 读取导入模式（来自 excel_apply 路径），写入词库 type 字段以驱动测验出题逻辑
     import_mode = session.get('import_mode', 'standard')
-    list_type = 'synonym' if import_mode == 'synonym' else 'standard'
+    if import_mode == 'synonym':
+        list_type = 'synonym'
+    elif import_mode == 'dictation':
+        list_type = 'dictation'
+    else:
+        list_type = 'standard'
     # 创建词库记录
     c = db.execute(
         'INSERT INTO word_lists (name, source_file, word_count, type) VALUES (?, ?, 0, ?)',
@@ -1137,10 +1172,12 @@ def learn_abandon():
 
 @app.route('/learn/quiz')
 def learn_quiz():
-    # 优先消费同义词学习流传入的测验范围
+    # 优先消费同义词/默写学习流传入的测验范围
     pending_ids = session.get('pending_quiz_word_ids')
     pending_return = session.get('pending_quiz_return_to')
     is_synonym_flow = bool(pending_ids) and pending_return == 'synonym_done'
+    is_dictation_flow = bool(pending_ids) and pending_return == 'dictation_done'
+    is_pending_flow = is_synonym_flow or is_dictation_flow
 
     list_id = get_current_list_id()
     if not list_id:
@@ -1151,8 +1188,8 @@ def learn_quiz():
 
     db = get_db()
 
-    if is_synonym_flow:
-        # 同义词学习流入口：不依赖 learn_session
+    if is_pending_flow:
+        # 同义词/默写学习流入口：不依赖 learn_session
         word_ids = list(pending_ids)
     else:
         # 普通学习流入口：必须有 learn_session
@@ -1170,30 +1207,41 @@ def learn_quiz():
         quiz_ids_raw = ls['quiz_word_ids']
         word_ids = json.loads(quiz_ids_raw) if quiz_ids_raw else json.loads(ls['word_ids'])
 
-    # 检查词库是否够生成干扰项
-    total_words = db.execute('SELECT COUNT(*) FROM words WHERE list_id=?', (list_id,)).fetchone()[0]
-    db.close()
-    if total_words < 4:
-        # 同义词流：词库太小，直接进完成页
-        if is_synonym_flow:
+    # 默写流使用填空测验（不需要干扰项，跳过 4 词最低门槛）
+    if is_dictation_flow:
+        questions = generate_dictation_quiz_questions(word_ids, list_id)
+        if questions is None:
             session.pop('pending_quiz_word_ids', None)
             session.pop('pending_quiz_return_to', None)
-            return redirect(url_for('synonym_done'))
-        return render_template('quiz_error.html', message='词库单词数不足（至少需要 4 个词）')
+            return redirect(url_for('dictation_done'))
+    else:
+        # 检查词库是否够生成干扰项
+        total_words = db.execute('SELECT COUNT(*) FROM words WHERE list_id=?', (list_id,)).fetchone()[0]
+        db.close()
+        if total_words < 4:
+            # 同义词流：词库太小，直接进完成页
+            if is_synonym_flow:
+                session.pop('pending_quiz_word_ids', None)
+                session.pop('pending_quiz_return_to', None)
+                return redirect(url_for('synonym_done'))
+            return render_template('quiz_error.html', message='词库单词数不足（至少需要 4 个词）')
 
-    # 学习测验：按词库 type 决定出题方式（synonym 词库 → 英文同义词选项）
-    list_type = _get_list_type(list_id)
-    questions = generate_quiz_questions(word_ids, list_id, list_type=list_type)
-    if questions is None:
-        if is_synonym_flow:
-            session.pop('pending_quiz_word_ids', None)
-            session.pop('pending_quiz_return_to', None)
-            return redirect(url_for('synonym_done'))
-        return render_template('quiz_error.html', message='词库单词数不足（至少需要 4 个词）')
+        # 学习测验：按词库 type 决定出题方式（synonym 词库 → 英文同义词选项）
+        list_type = _get_list_type(list_id)
+        questions = generate_quiz_questions(word_ids, list_id, list_type=list_type)
+        if questions is None:
+            if is_synonym_flow:
+                session.pop('pending_quiz_word_ids', None)
+                session.pop('pending_quiz_return_to', None)
+                return redirect(url_for('synonym_done'))
+            return render_template('quiz_error.html', message='词库单词数不足（至少需要 4 个词）')
 
     random.shuffle(questions)
     # 存到服务端文件，避免 cookie 超限
-    token = _save_quiz_data({'questions': questions, 'word_ids': word_ids})
+    quiz_payload = {'questions': questions, 'word_ids': word_ids}
+    if is_dictation_flow:
+        quiz_payload['quiz_subtype'] = 'dictation'
+    token = _save_quiz_data(quiz_payload)
     session['quiz_token'] = token
     session['quiz_index'] = 0
     session['quiz_answers'] = {}
@@ -1209,6 +1257,10 @@ def learn_quiz():
         session['quiz_synonym_flow'] = True
     else:
         session.pop('quiz_synonym_flow', None)
+    if is_dictation_flow:
+        session['quiz_dictation_flow'] = True
+    else:
+        session.pop('quiz_dictation_flow', None)
 
     return redirect(url_for('quiz_question'))
 
@@ -1242,6 +1294,16 @@ def quiz_question():
     answers = session.get('quiz_answers', {})
     preselected = answers.get(str(idx), '')
     from_prev = request.args.get('from_prev') == '1'
+
+    # 默写填空测验使用专用模板
+    if quiz_data.get('quiz_subtype') == 'dictation':
+        return render_template('quiz_dictation.html',
+                               question=q,
+                               current=current_pos,
+                               total=len(questions),
+                               display_progress=max_reached,
+                               prev_available=(idx > 0),
+                               preselected=preselected)
 
     return render_template('quiz.html',
                            question=q,
@@ -1290,17 +1352,24 @@ def quiz_submit():
     if not questions:
         return redirect(url_for('index'))
 
+    # 判断是否为默写填空测验（大小写不敏感 + 忽略首尾空格）
+    is_dictation_quiz = quiz_data.get('quiz_subtype') == 'dictation'
+
     correct_count = 0
     wrong_items = []
 
     for i, q in enumerate(questions):
         user_ans = answers.get(str(i), '')
-        is_correct = (user_ans == q['correct'])
+        if is_dictation_quiz:
+            # 默写填空：大小写不敏感，忽略首尾空格
+            is_correct = (user_ans.strip().lower() == q['correct'].strip().lower())
+        else:
+            is_correct = (user_ans == q['correct'])
         if is_correct:
             correct_count += 1
         else:
             wrong_items.append({
-                'english': q['english'],
+                'english': q.get('english', q.get('correct', '')),
                 'word_id': q['word_id'],
                 'user_answer': user_ans,
                 'correct_answer': q['correct']
@@ -1314,6 +1383,7 @@ def quiz_submit():
 
     if mode == 'learn':
         is_synonym_flow = bool(session.get('quiz_synonym_flow'))
+        is_dictation_flow = bool(session.get('quiz_dictation_flow'))
 
         if accuracy == 1.0:
             # 通关处理
@@ -1324,6 +1394,40 @@ def quiz_submit():
             # 兜底用 quiz_data 的 word_ids（旧 session 兼容）
             original_word_ids = session.get('quiz_original_word_ids') or list(word_ids)
             original_total = len(original_word_ids)
+
+            if is_dictation_flow:
+                # 默写学习流：UPDATE mastered + 写 study_log
+                try:
+                    db = get_db()
+                    for wid in original_word_ids:
+                        db.execute("UPDATE words SET status='mastered' WHERE id=?", (wid,))
+                    db.execute(
+                        'INSERT INTO study_log (list_id, date, mode, word_ids, accuracy, duration_s) VALUES (?,?,?,?,?,?)',
+                        (list_id, str(date.today()), 'quiz', json.dumps(original_word_ids), 1.0, 0)
+                    )
+                    db.commit()
+                    db.close()
+                except Exception as e:
+                    print(f'[quiz_submit dictation_flow] mastered/study_log 写入失败: {e}')
+
+                # 组装本次单词列表供结果页"完全掌握"勾选区
+                review_items = _fetch_review_items(original_word_ids, list_id, list_type='standard')
+
+                session.pop('quiz_answers', None)
+                session.pop('quiz_max_reached', None)
+                session.pop('quiz_dictation_flow', None)
+                session.pop('pending_quiz_return_to', None)
+                session.pop('quiz_original_word_ids', None)
+
+                return render_template('quiz_result.html',
+                                       mode='learn',
+                                       passed=True,
+                                       correct=original_total,
+                                       total=original_total,
+                                       accuracy=100,
+                                       wrong_items=[],
+                                       dictation_flow=True,
+                                       review_items=review_items)
 
             if is_synonym_flow:
                 # 同义词学习流：不操作 learn_session（同义词流没这个）
@@ -1428,7 +1532,8 @@ def quiz_submit():
                                    total=total,
                                    accuracy=int(accuracy * 100),
                                    wrong_items=wrong_items,
-                                   synonym_flow=is_synonym_flow)
+                                   synonym_flow=is_synonym_flow,
+                                   dictation_flow=is_dictation_flow)
 
     else:  # test mode
         list_id = get_current_list_id()
@@ -1481,15 +1586,22 @@ def quiz_retry():
         return jsonify({'error': '无词库'}), 400
     word_ids = [w['word_id'] for w in wrong_items]
 
-    # 错题循环：与首轮测验保持一致的出题方式（按词库 type）
-    list_type = _get_list_type(list_id)
-    questions = generate_quiz_questions(word_ids, list_id, list_type=list_type)
+    # 默写填空测验的错题重做：也走填空模式
+    if session.get('quiz_dictation_flow'):
+        questions = generate_dictation_quiz_questions(word_ids, list_id)
+    else:
+        # 错题循环：与首轮测验保持一致的出题方式（按词库 type）
+        list_type = _get_list_type(list_id)
+        questions = generate_quiz_questions(word_ids, list_id, list_type=list_type)
     if not questions:
         return jsonify({'error': '无法生成题目'}), 400
 
     random.shuffle(questions)
     # 存到服务端文件
-    token = _save_quiz_data({'questions': questions, 'word_ids': word_ids})
+    retry_payload = {'questions': questions, 'word_ids': word_ids}
+    if session.get('quiz_dictation_flow'):
+        retry_payload['quiz_subtype'] = 'dictation'
+    token = _save_quiz_data(retry_payload)
     session['quiz_token'] = token
     session['quiz_index'] = 0
     session['quiz_answers'] = {}
@@ -1850,6 +1962,212 @@ def synonym_done():
             print(f'[synonym_done] study_log 写入失败: {e}')
 
     return render_template('flashcard_synonym_done.html', total=total)
+
+
+# ─────────────────────────────────────────
+# 默写学习（独立翻卡模式：正面中文 → 背面英文）
+# 仅基于 session 维护游标，不写 learn_session
+# ─────────────────────────────────────────
+
+def _dictation_enter_quiz_or_done():
+    """默写学完最后一张后的跳转决策：
+    默写填空测验不需要干扰项，无 4 词最低门槛，始终跳测验。
+    """
+    word_ids = session.get('dict_word_ids') or []
+    list_id = session.get('dict_list_id') or get_current_list_id()
+
+    if not word_ids or not list_id:
+        return redirect(url_for('dictation_done'))
+
+    # 先记账，再跳测验（用户中途退出也已计入 streak）
+    _write_dictation_study_log()
+
+    # 标记本次测验来源 + 测验范围（learn_quiz 会优先消费）
+    session['pending_quiz_word_ids'] = list(word_ids)
+    session['pending_quiz_return_to'] = 'dictation_done'
+
+    return redirect(url_for('learn_quiz'))
+
+
+def _write_dictation_study_log():
+    """把默写学习记录写入 study_log（mode='learn_dictation'）。
+
+    在"跳测验之前"调用，确保即使用户在测验中途退出，
+    学习行为也已计入 streak / today_completed 统计。
+    幂等：session 中 dict_logged 标记防止重复写入。
+    """
+    word_ids = session.get('dict_word_ids') or []
+    list_id = session.get('dict_list_id') or get_current_list_id()
+    started_at = session.get('dict_started_at')
+
+    if not word_ids or not list_id:
+        return
+
+    duration = 0
+    if started_at:
+        try:
+            t0 = datetime.fromisoformat(started_at)
+            duration = max(0, int((datetime.now() - t0).total_seconds()))
+        except Exception:
+            duration = 0
+
+    try:
+        db = get_db()
+        db.execute(
+            'INSERT INTO study_log (list_id, date, mode, word_ids, accuracy, duration_s) VALUES (?,?,?,?,?,?)',
+            (list_id, str(date.today()), 'learn_dictation', json.dumps(word_ids), 1.0, duration)
+        )
+        db.commit()
+        db.close()
+        session['dict_logged'] = True
+    except Exception as e:
+        print(f'[_write_dictation_study_log] 写入失败: {e}')
+
+
+@app.route('/learn/dictation/setup')
+def dictation_setup():
+    list_id = get_current_list_id()
+    if not list_id:
+        return redirect(url_for('index'))
+    stats = get_list_stats(list_id)
+
+    db = get_db()
+    list_count = db.execute('SELECT COUNT(*) FROM word_lists').fetchone()[0]
+    db.close()
+    show_picker = (list_count >= 2) and (not session.get('list_picked'))
+
+    default_n = min(20, stats['unmastered']) if stats['unmastered'] > 0 else 0
+    return render_template('learn_dictation_setup.html',
+                           stats=stats,
+                           default_n=default_n,
+                           show_picker=show_picker)
+
+
+@app.route('/learn/dictation/start', methods=['POST'])
+def dictation_start():
+    list_id = get_current_list_id()
+    if not list_id:
+        return redirect(url_for('index'))
+    n = request.form.get('n', 20, type=int)
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT id FROM words WHERE list_id=? AND status='unmastered' "
+        "ORDER BY RANDOM() LIMIT ?",
+        (list_id, n)
+    ).fetchall()
+    db.close()
+
+    word_ids = [r['id'] for r in rows]
+    if not word_ids:
+        return redirect(url_for('dictation_setup'))
+
+    session['dict_word_ids'] = word_ids
+    session['dict_total'] = len(word_ids)
+    session['dict_index'] = 0
+    session['dict_started_at'] = datetime.now().isoformat()
+    session['dict_list_id'] = list_id
+    return redirect(url_for('dictation_card'))
+
+
+@app.route('/learn/dictation/card')
+def dictation_card():
+    word_ids = session.get('dict_word_ids') or []
+    if not word_ids:
+        return _dictation_enter_quiz_or_done()
+
+    total = session.get('dict_total', len(word_ids))
+    idx = session.get('dict_index', 0)
+    if idx >= total:
+        return _dictation_enter_quiz_or_done()
+
+    current_id = word_ids[idx]
+    db = get_db()
+    word = db.execute('SELECT * FROM words WHERE id=?', (current_id,)).fetchone()
+    db.close()
+
+    if not word:
+        # 词被删了：游标推进一位
+        session['dict_index'] = idx + 1
+        return redirect(url_for('dictation_card'))
+
+    current_pos = idx + 1
+    prev_available = idx > 0
+
+    return render_template('flashcard_dictation.html',
+                           word=dict(word),
+                           current=current_pos,
+                           total=total,
+                           prev_available=prev_available)
+
+
+@app.route('/learn/dictation/next', methods=['POST'])
+def dictation_next():
+    word_ids = session.get('dict_word_ids') or []
+    total = session.get('dict_total', len(word_ids))
+
+    if not word_ids:
+        return redirect(url_for('dictation_card'))
+
+    idx = session.get('dict_index', 0) + 1
+    if idx >= total:
+        session['dict_index'] = total
+        return _dictation_enter_quiz_or_done()
+    session['dict_index'] = idx
+    return redirect(url_for('dictation_card'))
+
+
+@app.route('/learn/dictation/prev', methods=['POST'])
+def dictation_prev():
+    word_ids = session.get('dict_word_ids') or []
+    if not word_ids:
+        return redirect(url_for('dictation_card'))
+
+    session['dict_index'] = max(0, session.get('dict_index', 0) - 1)
+    return redirect(url_for('dictation_card'))
+
+
+@app.route('/learn/dictation/abandon', methods=['POST'])
+def dictation_abandon():
+    session.pop('dict_word_ids', None)
+    session.pop('dict_total', None)
+    session.pop('dict_index', None)
+    session.pop('dict_started_at', None)
+    session.pop('dict_list_id', None)
+    session.pop('dict_logged', None)
+    return redirect(url_for('index'))
+
+
+@app.route('/learn/dictation/done')
+def dictation_done():
+    total = session.pop('dict_total', 0)
+    word_ids = session.pop('dict_word_ids', None) or []
+    started_at = session.pop('dict_started_at', None)
+    list_id = session.pop('dict_list_id', None) or get_current_list_id()
+    already_logged = session.pop('dict_logged', False)
+    session.pop('dict_index', None)
+
+    # 兜底写入 study_log（若 _write_dictation_study_log 未执行）
+    if not already_logged and word_ids and list_id:
+        duration = 0
+        if started_at:
+            try:
+                t0 = datetime.fromisoformat(started_at)
+                duration = max(0, int((datetime.now() - t0).total_seconds()))
+            except Exception:
+                duration = 0
+        try:
+            db = get_db()
+            db.execute(
+                'INSERT INTO study_log (list_id, date, mode, word_ids, accuracy, duration_s) VALUES (?,?,?,?,?,?)',
+                (list_id, str(date.today()), 'learn_dictation', json.dumps(word_ids), 1.0, duration)
+            )
+            db.commit()
+            db.close()
+        except Exception as e:
+            print(f'[dictation_done] study_log 写入失败: {e}')
+
+    return render_template('flashcard_dictation_done.html', total=total)
 
 
 # ─────────────────────────────────────────

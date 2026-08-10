@@ -76,10 +76,19 @@
   </div>
   {% endif %}
 
-  <!-- 操作按钮：根据词库 type 智能分发到普通翻卡 / 同义词翻卡 -->
+  <!-- 操作按钮：根据词库 type 智能分发到普通翻卡 / 同义词翻卡 / 默写翻卡 -->
   {% set is_synonym = (current_list.type == 'synonym') %}
-  {% set start_url = url_for('synonym_setup') if is_synonym else url_for('learn_setup') %}
-  {% set continue_url = url_for('synonym_setup') if is_synonym else url_for('learn_continue') %}
+  {% set is_dictation = (current_list.type == 'dictation') %}
+  {% if is_synonym %}
+    {% set start_url = url_for('synonym_setup') %}
+    {% set continue_url = url_for('synonym_setup') %}
+  {% elif is_dictation %}
+    {% set start_url = url_for('dictation_setup') %}
+    {% set continue_url = url_for('dictation_setup') %}
+  {% else %}
+    {% set start_url = url_for('learn_setup') %}
+    {% set continue_url = url_for('learn_continue') %}
+  {% endif %}
   {% set has_progress = active_session if not is_synonym else active_syn_session %}
 
   <div class="action-row" style="justify-content: center;">
@@ -90,7 +99,9 @@
       {% if has_progress and not completed_today %}
       <a href="{{ continue_url }}" class="btn btn--ghost">继续上次学习</a>
       {% endif %}
-      <a href="{{ start_url }}" class="btn btn--primary btn--lg">开始学习</a>
+      <a href="{{ start_url }}" class="btn btn--primary btn--lg">
+        {% if is_dictation %}开始默写{% else %}开始学习{% endif %}
+      </a>
     {% endif %}
 
     <a href="{{ url_for('test_setup') }}" class="btn btn--ghost">测试模式</a>

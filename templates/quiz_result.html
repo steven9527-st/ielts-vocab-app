@@ -10,12 +10,16 @@
     <div style="font-size:16px; color:var(--clr-text-secondary); margin-bottom:var(--space-8);">
       {% if synonym_flow %}
         本次共测验了 {{ total }} 个同义词，全部答对
+      {% elif dictation_flow %}
+        本次共默写了 {{ total }} 个单词，全部答对
       {% else %}
         本次学习的 {{ total }} 个单词已全部标记为已掌握
       {% endif %}
     </div>
     {% if synonym_flow %}
       <a href="{{ url_for('synonym_done') }}" class="btn btn--primary btn--lg">完成本次学习</a>
+    {% elif dictation_flow %}
+      <a href="{{ url_for('dictation_done') }}" class="btn btn--primary btn--lg">完成本次默写</a>
     {% else %}
       <a href="{{ url_for('index') }}" class="btn btn--primary btn--lg">返回首页</a>
     {% endif %}
@@ -36,6 +40,11 @@
         <button type="submit" class="btn btn--ghost"
                 onclick="return confirm('放弃后本次同义词学习的测验不再继续')">放弃测验</button>
       </form>
+      {% elif dictation_flow %}
+      <form method="post" action="{{ url_for('dictation_abandon') }}">
+        <button type="submit" class="btn btn--ghost"
+                onclick="return confirm('放弃后本次默写学习的测验不再继续')">放弃测验</button>
+      </form>
       {% else %}
       <form method="post" action="{{ url_for('learn_abandon') }}">
         <button type="submit" class="btn btn--ghost"
@@ -49,9 +58,15 @@
       <div class="wrong-list__title">错题详情</div>
       {% for item in wrong_items %}
       <div class="wrong-item">
+        {% if dictation_flow %}
+        <div class="wrong-item__english">{{ item.correct_answer }}</div>
+        <div class="wrong-item__user">✗ 你的默写：{{ item.user_answer or '（未作答）' }}</div>
+        <div class="wrong-item__correct">✓ 正确拼写：{{ item.correct_answer }}</div>
+        {% else %}
         <div class="wrong-item__english">{{ item.english | lower }}</div>
         <div class="wrong-item__user">✗ 你的选择：{{ item.user_answer or '（未作答）' }}</div>
         <div class="wrong-item__correct">✓ 正确答案：{{ item.correct_answer }}</div>
+        {% endif %}
       </div>
       {% endfor %}
     </div>

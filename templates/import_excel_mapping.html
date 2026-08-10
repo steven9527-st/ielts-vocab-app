@@ -81,6 +81,10 @@
             {% if guess.suggested_mode == 'synonym' %}checked{% endif %}>
           <span><strong>同义词模式</strong>：B 列是英文同义词，导入后可直接用同义词学习</span>
         </label>
+        <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="radio" name="importMode" value="dictation">
+          <span><strong>默写模式</strong>：看中文默写英文，导入后可使用默写学习</span>
+        </label>
       </div>
     </div>
 

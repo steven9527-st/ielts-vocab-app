@@ -365,9 +365,11 @@ def apply_mapping(
     """根据用户映射，将原始行转换为标准 entries
 
     import_mode:
-      'standard' — B 列只写入 chinese 字段（默认行为）
-      'synonym'  — B 列同时写入 chinese 和 synonyms 字段（同义词词库专用）
-                   显式 synonym_col 优先于 import_mode 推断的同义词。
+      'standard'  — B 列只写入 chinese 字段（默认行为）
+      'synonym'   — B 列同时写入 chinese 和 synonyms 字段（同义词词库专用）
+                    显式 synonym_col 优先于 import_mode 推断的同义词。
+      'dictation' — B 列只写入 chinese 字段（默写词库，与 standard 行为相同，
+                    仅标记词库 type='dictation'）
 
     english_col_2:
       仅在 import_mode='synonym' 且 english_col_2 >= 0 时生效。
@@ -380,7 +382,7 @@ def apply_mapping(
     """
     if english_col < 0 or chinese_col < 0:
         raise RuntimeError('必须指定英文列和中文列')
-    if import_mode not in ('standard', 'synonym'):
+    if import_mode not in ('standard', 'synonym', 'dictation'):
         raise RuntimeError(f'不支持的导入模式：{import_mode}')
 
     # 双英文列展开仅在同义词模式下生效；标准模式即便误传 english_col_2 也忽略
