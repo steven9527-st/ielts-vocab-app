@@ -20,3 +20,6 @@ dist/
 
 # 打包产物中间文件（保留 spec 和 build_assets/icon.icns 源文件，不保留 .iconset 临时目录）
 *.iconset/
+
+# 压缩包（本地生成的分发文件，不入仓库）
+*.zip
